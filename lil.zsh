@@ -74,14 +74,100 @@ _lil_uservar() {
 }
 
 # ---------------------------------------------------------------------------
-# Spinner: owns the tty while pi runs; timeout at 120s
+# Spinner v3: Katamari marquee — the stage message scrolls left→right, each char
+# one step along a rainbow ramp (the TEXT is the rainbow). Stage comes from the
+# pi --mode json event tracker ($LIL_RUNTIME/stage). Timeout at 120s unchanged.
 # ---------------------------------------------------------------------------
+
+# 256-color rainbow ramp; color cycles by character position within the message.
+_lil_ramp=(196 208 214 226 118 46 49 51 45 39 93 201)
+
+# Per-message tile cache: message → array of (SGR-colored char | plain space),
+# with 8 uncolored gap spaces appended. Rebuilt only when the stage message
+# changes, so the frame loop stays O(W).
+_LIL_TILE_MSG=""
+_LIL_TILE_LEN=0
+_LIL_TILE=()
+
+# Print one marquee frame's bar (no \r prefix — the loop adds it): a leading
+# space, then the W-column window of the tiled message at the given scroll
+# offset, then LIL_RESET. Each +1 offset shifts the text right 2 columns.
+_lil_marquee_frame() {
+  local msg="$1" offset="$2" width="$3"
+  local i mlen c p ti out=""
+  if [[ "$msg" != "$_LIL_TILE_MSG" ]]; then
+    _LIL_TILE_MSG="$msg"
+    _LIL_TILE=()
+    mlen=${#msg}
+    _LIL_TILE_LEN=$(( mlen + 8 ))
+    for (( i = 1; i <= mlen; i++ )); do
+      _LIL_TILE[$i]=$'\e[38;5;'"${_lil_ramp[(( (i - 1) % 12 ) + 1)]}m${msg[i]}"
+    done
+    for (( i = mlen + 1; i <= _LIL_TILE_LEN; i++ )); do
+      _LIL_TILE[$i]=' '
+    done
+  fi
+  # Absolute stream position p = column − 2·offset; as offset grows the window
+  # moves left over the tiled stream, so text travels left→right on screen.
+  for (( c = 0; c < width; c++ )); do
+    p=$(( c - 2 * offset ))
+    ti=$(( ((p % _LIL_TILE_LEN) + _LIL_TILE_LEN) % _LIL_TILE_LEN + 1 ))
+    out+="${_LIL_TILE[$ti]}"
+  done
+  print -rn -- " ${out}${LIL_RESET}"
+}
+
+# Stage-file reader (separate tiny helper so tests can drive the spinner's
+# state machine without a live run).
+_lil_read_stage() {
+  [[ -f "$LIL_RUNTIME/stage" ]] && print -r -- "$(<"$LIL_RUNTIME/stage")"
+}
+
+# Persist ONE WORD + optional detail to $LIL_RUNTIME/stage; append transitions
+# (with timestamp) to $LIL_RUNTIME/stage.log.
+_lil_set_stage() {
+  local s="$1" cur=""
+  [[ -f "$LIL_RUNTIME/stage" ]] && cur="$(<"$LIL_RUNTIME/stage")"
+  [[ "$s" == "$cur" ]] && return 0
+  print -r -- "$s" > "$LIL_RUNTIME/stage"
+  print -r -- "$(date +%H:%M:%S) $s" >> "$LIL_RUNTIME/stage.log"
+}
+
+# Advance the stage machine from one JSONL event line:
+# start → thinking (first message_update) → tool:<name> (tool execution start)
+# → writing (message_updates resuming after tools) → done (agent_end).
+_lil_track_stage() {
+  local line="$1" t
+  t="$(jq -r 'if .type=="agent_end" then "done"
+             elif .type=="tool_execution_start" then "tool:"+(.toolName//"")
+             elif .type=="message_update" then "msg"
+             else "" end' <<<"$line" 2>/dev/null)"
+  case "$t" in
+    done) _lil_set_stage done ;;
+    tool:*) _LIL_WAS_TOOL=1; _lil_set_stage "$t" ;;
+    msg)
+      if (( _LIL_WAS_TOOL )); then
+        _LIL_WAS_TOOL=0
+        _lil_set_stage writing
+      elif (( ! _LIL_SEEN_MSG )); then
+        _LIL_SEEN_MSG=1
+        _lil_set_stage thinking
+      fi
+      ;;
+  esac
+}
+
 _lil_spinner() {
   local pid="$1"
   local start=$SECONDS
-  local -a spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-  local -a flavors=("consulting the vault archives…" "asking the overseer…" "thumbing the manual…")
-  local i=0 si fi gpid
+  local cols="${COLUMNS:-80}"
+  (( cols < 20 )) && cols=80
+  local W=$(( (cols < 120 ? cols : 120) - 2 ))
+  local offset=0 stage="" prevstage="" msg="" gpid
+  local -A stage_msg
+  stage_msg[start]="Winding up the cosmos… your question rolls forth…"
+  stage_msg[thinking]="The King of All Terminals ponders your tiny, precious question…"
+  stage_msg[writing]="Presenting to the King… he composes his royal reply…"
   _LIL_TIMEOUT=0
   while kill -0 "$pid" 2>/dev/null; do
     if (( SECONDS - start > LIL_TIMEOUT_SECS )); then
@@ -91,14 +177,40 @@ _lil_spinner() {
       _LIL_TIMEOUT=1
       break
     fi
-    si=$(( (i % ${#spin[@]}) + 1 ))
-    fi=$(( (i / 8) % ${#flavors[@]} + 1 ))
-    printf '\r %s %s' "${LIL_GREEN}${spin[$si]}${LIL_RESET}" \
-      "${LIL_GRAY}${flavors[$fi]}${LIL_RESET}"
-    i=$((i + 1))
-    sleep 0.08
+    stage="$(_lil_read_stage)"
+    [[ -z "$stage" ]] && stage="start"
+    if [[ "$stage" != "$prevstage" ]]; then
+      prevstage="$stage"
+      offset=0
+    fi
+    case "$stage" in
+      tool:*) msg="Rolling over ${stage#tool:}… it sticks to the katamari so nicely…" ;;
+      *)      msg="${stage_msg[$stage]:-${stage_msg[start]}}" ;;
+    esac
+    if (( SECONDS - start > 25 )); then
+      msg+=" My, what a weighty ball this is…"
+    fi
+    printf '\r\033[K'
+    _lil_marquee_frame "$msg" "$offset" "$W"
+    offset=$(( offset + 1 ))
+    sleep 0.07
   done
   printf '\r\033[K'
+}
+
+# ---------------------------------------------------------------------------
+# Extract the assistant's raw markdown from a pi --mode json log: concatenate
+# every text_delta (byte-faithful to what `-p` text mode streamed). Fallback:
+# the final assistant message's text blocks (agent_end), in case no deltas ran.
+# ---------------------------------------------------------------------------
+_lil_extract_answer() {
+  local jsonl="${1:-$LIL_RUNTIME/last.out}"
+  local out
+  out="$(jq -jr 'select(.type=="message_update" and .assistantMessageEvent.type=="text_delta") | .assistantMessageEvent.delta' "$jsonl" 2>/dev/null)"
+  if [[ -z "$out" ]]; then
+    out="$(jq -r 'select(.type=="agent_end") | .messages[] | select(.role=="assistant") | .content[]? | select(.type=="text") | .text' "$jsonl" 2>/dev/null)"
+  fi
+  print -r -- "$out"
 }
 
 # ---------------------------------------------------------------------------
@@ -115,21 +227,33 @@ _lil_invoke() {
   : > "$outfile"
   : > "$rcfile"
   : > "$LIL_RUNTIME/last.pid"
+  : > "$LIL_RUNTIME/stage"
+  : > "$LIL_RUNTIME/stage.log"
   # `&!` disowns the subshell so the interactive shell prints no "[N] pid"
-  # job-control line; the exit code is carried back via $rcfile instead of
-  # wait, which cannot wait on a disowned child. The real pi pid is recorded
-  # in last.pid so the spinner can reap pi itself on timeout (pi is a
-  # grandchild, invisible to the shell's job table).
+  # job-control line; pi's exit code is carried back via $rcfile.
   (
     cd "$LIL_RUNTIME" || exit 1
-    PI_CODING_AGENT_DIR="$LIL_HOME/pi" pi -p -nc \
-      --exclude-tools bash,edit,write \
-      --session "$LIL_RUNTIME/session" \
-      --append-system-prompt "$(cat "$LIL_RUNTIME/fingerprint.txt")" \
-      "$prompt" > "$outfile" 2> "$errfile" &
-    print -r -- $! > "$LIL_RUNTIME/last.pid"
-    wait
-    print -r -- $? > "$rcfile"
+    _LIL_WAS_TOOL=0
+    _LIL_SEEN_MSG=0
+    _lil_set_stage start
+    # pi runs in --mode json (event stream). It is backgrounded INSIDE the
+    # group so `$!` → last.pid is pi's REAL pid (timeout reaping unchanged);
+    # the group's `wait` exit status is pi's, surfaced via pipestatus[1].
+    # tee mirrors the raw JSONL to $outfile while the reader loop drives the
+    # stage machine live. `< /dev/null` guarantees pi stdin EOF — in a non-tty
+    # context pi blocks on an open stdin, and the interactive shell owns the
+    # tty anyway.
+    { PI_CODING_AGENT_DIR="$LIL_HOME/pi" pi --mode json -nc \
+        --exclude-tools bash,edit,write \
+        --session "$LIL_RUNTIME/session" \
+        --append-system-prompt "$(cat "$LIL_RUNTIME/fingerprint.txt")" \
+        "$prompt" < /dev/null 2> "$errfile" &
+      print -r -- $! > "$LIL_RUNTIME/last.pid"
+      wait
+    } | tee "$outfile" | while IFS= read -r line; do
+        _lil_track_stage "$line"
+      done
+    print -r -- ${pipestatus[1]} > "$rcfile"
   ) &!
   local pid=$!
   _lil_spinner "$pid"
@@ -144,7 +268,7 @@ _lil_invoke() {
     print -r -- " ${LIL_AMBER}⚠ pi exited ($rc) — see $errfile. Retry, boss.${LIL_RESET}"
     return 2
   fi
-  LIL_ANSWER="$(<"$outfile")"
+  LIL_ANSWER="$(_lil_extract_answer "$outfile")"
   return 0
 }
 

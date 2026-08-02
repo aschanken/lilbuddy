@@ -96,11 +96,11 @@ lil "…"  (zsh function, current shell)
    ├─ snapshot clipboard (pbpaste) + terminal scrollback (tmux capture-pane)
    ├─ regenerate ~/.cache/lil/fingerprint.txt (24h TTL)
    ├─ set WezTerm user-var LIL_SCRATCHPAD=1
-   ├─ PI_CODING_AGENT_DIR=lilbuddy/pi pi -p -nc \
+   ├─ PI_CODING_AGENT_DIR=lilbuddy/pi pi --mode json -nc \
    │      --exclude-tools bash,edit,write \
    │      --session ~/.cache/lil/session \
    │      --append-system-prompt "$(fingerprint)" "<question>"
-   │        │  spinner owns the tty; stdout → temp file; 120s kill
+   │        │  katamari marquee spinner (stage-driven); JSONL → temp file; 120s kill
    │        └─ pi → DeepSeek V4 Flash → SYSTEM.md persona (lilbuddy/pi/SYSTEM.md)
    │              read-only tools only: read_clipboard / read_terminal snapshots,
    │              guarded `probe` for live inspection (strict allowlist)
