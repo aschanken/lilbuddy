@@ -11,6 +11,8 @@ LIL_DIM=$'\e[38;5;41m'      # dim Pip-Boy green
 LIL_AMBER=$'\e[38;5;214m'   # amber (warnings / accents)
 LIL_GRAY=$'\e[38;5;244m'    # chrome
 LIL_RESET=$'\e[0m'
+LIL_BOLD=$'\e[1m'           # bold
+LIL_ITALIC=$'\e[3m'         # italic
 
 # ---------------------------------------------------------------------------
 # Environment fingerprint (regenerate when missing or older than 24h)
@@ -223,46 +225,224 @@ _lil_strip_cmd() {
 }
 
 # ---------------------------------------------------------------------------
-# Scratchpad box (display only — execution uses $cmd verbatim)
+# Renderer helpers
 # ---------------------------------------------------------------------------
-_lil_wrap() {
+# Word-wrap $1 to width $2 at word boundaries, treating inline `code` spans as
+# atomic (inner spaces are protected so a span never straddles a wrap point).
+_lil_wrap_prose() {
   local text="$1" width="$2"
-  local ln out=() wrapped_line="" word
-  for ln in ${(f)text}; do
-    if [[ -z "$ln" ]]; then
-      out+=("")
-      continue
+  local prot="" in_code=0 i=0
+  for (( i = 1; i <= ${#text}; i++ )); do
+    local ch="${text[$i]}"
+    if [[ "$ch" == '`' ]]; then
+      in_code=$((1 - in_code)); prot+="$ch"
+    elif (( in_code )) && [[ "$ch" == [[:space:]] ]]; then
+      prot+=$'\x1e'
+    else
+      prot+="$ch"
     fi
-    wrapped_line=""
-    for word in ${=ln}; do
-      if [[ -z "$wrapped_line" ]] || (( ${#wrapped_line} + 1 + ${#word} <= width )); then
-        [[ -n "$wrapped_line" ]] && wrapped_line+=" "
-        wrapped_line+="$word"
+  done
+  local -a words=()
+  words=(${=prot})
+  local -a out=()
+  local line="" w
+  for w in "${words[@]}"; do
+    if [[ -z "$line" ]]; then
+      line="$w"
+    elif (( ${#line} + 1 + ${#w} <= width )); then
+      line+=" $w"
+    else
+      out+=("$line"); line="$w"
+    fi
+  done
+  [[ -n "$line" ]] && out+=("$line")
+  local -a rendered=()
+  local l=
+  for l in "${out[@]}"; do
+    rendered+=("${l//$'\x1e'/ }")
+  done
+  print -r -- "${(F)rendered}"
+}
+
+# Apply inline markdown (code / bold / italic) to one content line. zsh-only
+# parameter expansion — no sed — so `/`, `&`, `\` and quotes pass through.
+_lil_inline() {
+  local s="$1" out="" rest="$1"
+  while [[ -n "$rest" ]]; do
+    if [[ "$rest" == \`* ]]; then
+      local inner="${rest#\`}"
+      if [[ "$inner" == *\`* ]]; then
+        local content="${inner%%\`*}"
+        out+="${LIL_AMBER}${content}${LIL_RESET}"
+        rest="${inner:${#content}+1}"
       else
-        out+=("$wrapped_line")
-        wrapped_line="$word"
+        out+='`'; rest="$inner"
       fi
-    done
-    out+=("$wrapped_line")
+    elif [[ "$rest" == \*\** ]]; then
+      local tail="${rest:2}"
+      if [[ "$tail" == *\*\** ]]; then
+        local content="${tail%%\*\**}"
+        out+="${LIL_BOLD}${LIL_GREEN}${content}${LIL_RESET}"
+        rest="${tail:${#content}+2}"
+      else
+        out+="**"; rest="$tail"
+      fi
+    elif [[ "$rest" == \** ]]; then
+      local tail="${rest:1}"
+      if [[ "$tail" == *\** ]]; then
+        local content="${tail%%\**}"
+        out+="${LIL_ITALIC}${LIL_DIM}${content}${LIL_RESET}"
+        rest="${tail:${#content}+1}"
+      else
+        out+="*"; rest="$tail"
+      fi
+    else
+      local head="${rest%%[\`*]*}"
+      out+="$head"
+      rest="${rest:${#head}}"
+    fi
+  done
+  print -r -- "$out"
+}
+
+# Hard (character-exact) wrap of $1 to width $2 — display only, bytes preserved.
+_lil_wrap_hard() {
+  local text="$1" width="$2"
+  local -a out=()
+  local rem="$text" chunk=
+  while [[ -n "$rem" ]]; do
+    chunk="${rem[1,width]}"
+    out+=("$chunk")
+    rem="${rem:${#chunk}}"
   done
   print -r -- "${(F)out}"
 }
 
+# ---------------------------------------------------------------------------
+# ANSI markdown renderer: line-state machine (in/out of ``` fence).
+# ---------------------------------------------------------------------------
+_lil_render() {
+  local text="$1"
+  local cols="${COLUMNS:-80}"
+  (( cols < 24 )) && cols=24
+  local W=$(( cols > 100 ? 100 : cols ))
+  local CW=$(( W - 4 ))
+  (( CW < 20 )) && CW=20
+  local -a lines=("${(f)text}")
+  local -a out=()
+  local i=0 in_fence=0 prev_blank=0 ln=
+  for (( i = 1; i <= ${#lines[@]}; i++ )); do
+    ln="${lines[$i]}"
+    local nospace="${ln#"${ln%%[![:space:]]*}"}"
+    if (( in_fence )); then
+      if [[ "$nospace" == \`\`\`* ]]; then
+        in_fence=0
+        if (( ${#out[@]} > 0 )) && [[ -n "${out[-1]}" ]]; then out+=(""); fi
+        prev_blank=1
+        continue
+      fi
+      local rem="$ln" chunk=
+      if [[ -z "$rem" ]]; then
+        out+=("${LIL_GRAY}  ┃ ${LIL_RESET}")
+      else
+        while [[ -n "$rem" ]]; do
+          chunk="${rem[1,CW]}"
+          out+=("${LIL_GRAY}  ┃ ${LIL_RESET}${LIL_GREEN}${chunk}${LIL_RESET}")
+          rem="${rem:${#chunk}}"
+        done
+      fi
+      prev_blank=0
+      continue
+    fi
+    if [[ "$nospace" == \`\`\`* ]]; then
+      if (( ${#out[@]} > 0 )) && [[ -n "${out[-1]}" ]]; then out+=(""); fi
+      in_fence=1
+      prev_blank=1
+      continue
+    fi
+    if [[ -z "${ln//[[:space:]]/}" ]]; then
+      (( prev_blank )) || out+=("")
+      prev_blank=1
+      continue
+    fi
+    prev_blank=0
+    if [[ "$nospace" =~ '^#{1,3}[[:space:]]+.*' ]]; then
+      local hashes="${nospace%%[[:space:]]*}"
+      local htext="${nospace#${hashes}}"
+      htext="${htext#"${htext%%[![:space:]]*}"}"
+      local plain="◆ ${(U)htext}"
+      local rule_len=$(( CW - ${#plain} ))
+      (( rule_len < 0 )) && rule_len=0
+      out+=("${LIL_BOLD}${LIL_GREEN}  ${plain}${LIL_RESET}${LIL_AMBER}${(l:$rule_len::─:)}${LIL_RESET}")
+      out+=("")
+      prev_blank=1
+    elif [[ "$nospace" =~ '^(-|[*])[[:space:]]+.*' ]]; then
+      local content="${nospace:1}"
+      content="${content#"${content%%[![:space:]]*}"}"
+      local wrapped="$(_lil_wrap_prose "$content" "$CW")"
+      local wl= first=1
+      for wl in ${(f)wrapped}; do
+        if (( first )); then
+          out+=("${LIL_GREEN} ▸ ${LIL_RESET}$(_lil_inline "$wl")")
+          first=0
+        else
+          out+=("   $(_lil_inline "$wl")")
+        fi
+      done
+    elif [[ "$nospace" =~ '^[0-9]+[.][[:space:]]+.*' ]]; then
+      local num="${nospace%%[.]*}"
+      local rest3="${nospace#${num}.}"
+      rest3="${rest3#"${rest3%%[![:space:]]*}"}"
+      local wrapped="$(_lil_wrap_prose "$rest3" "$CW")"
+      local pad="${(l:${#num}+2:: :)}"
+      local wl= first=1
+      for wl in ${(f)wrapped}; do
+        if (( first )); then
+          out+=("${LIL_GREEN}${num}.${LIL_RESET} $(_lil_inline "$wl")")
+          first=0
+        else
+          out+=("$pad$(_lil_inline "$wl")")
+        fi
+      done
+    else
+      local wrapped="$(_lil_wrap_prose "$nospace" "$CW")"
+      local wl=
+      for wl in ${(f)wrapped}; do
+        out+=("  $(_lil_inline "$wl")")
+      done
+    fi
+  done
+  print -r -- "${(F)out}"
+}
+
+# ---------------------------------------------------------------------------
+# Scratchpad box (display only — execution uses $cmd verbatim)
+# ---------------------------------------------------------------------------
 _lil_scratchpad_box() {
   local cmd="$1"
   local width="${COLUMNS:-80}"
+  (( width > 100 )) && width=100
   (( width < 24 )) && width=24
-  local cw=$((width - 4))
-  local wrapped line pad
-  wrapped="$(_lil_wrap "$cmd" "$cw")"
-  print -r -- "${LIL_AMBER}╭──   SCRATCHPAD ${(l:$((width - 17))::─:)}╮${LIL_RESET}"
+  local cw=$((width - 8))
+  local line= pad= wrapped= first= sp=
+  local top_fill=$((width - 29)); (( top_fill < 0 )) && top_fill=0
+  local bot_fill=$((width - 24)); (( bot_fill < 0 )) && bot_fill=0
+  print -r -- "${LIL_AMBER}  ╔═ ☢  S C R A T C H P A D ${(l:$top_fill::═:)}╗${LIL_RESET}"
+  wrapped="$(_lil_wrap_hard "$cmd" "$cw")"
+  first=1
   for line in ${(f)wrapped}; do
-    pad=$((cw - ${#line}))
+    pad=$((width - 8 - ${#line}))
     (( pad < 0 )) && pad=0
-    print -r -- "${LIL_AMBER}│ ${LIL_GREEN}${line}${(l:$pad:: :)}${LIL_AMBER} │${LIL_RESET}"
+    sp="${(l:$pad:: :)}"
+    if (( first )); then
+      print -r -- "${LIL_AMBER}  ║ ${LIL_RESET}${LIL_BOLD}${LIL_GREEN}❯ ${line}${sp}${LIL_AMBER} ║${LIL_RESET}"
+      first=0
+    else
+      print -r -- "${LIL_AMBER}  ║${LIL_RESET}${LIL_BOLD}${LIL_GREEN}   ${line}${sp}${LIL_AMBER} ║${LIL_RESET}"
+    fi
   done
-  print -r -- "${LIL_AMBER}╰${(l:$((width - 2))::─:)}╯${LIL_RESET}"
-  print -r -- "   ${LIL_GRAY}⏎ dismiss${LIL_RESET}   ${LIL_AMBER}󰌑 ⌘⏎/^R run${LIL_RESET}   ${LIL_AMBER}⌘C/^Y copy${LIL_RESET}   ${LIL_GRAY}✏ type to follow up${LIL_RESET}"
+  print -r -- "${LIL_AMBER}  ╚${(l:$bot_fill::═:)} AWAITING ORDERS ═══╝${LIL_RESET}"
+  print -r -- "    ${LIL_GRAY}[${LIL_RESET}${LIL_AMBER}⏎${LIL_RESET} ${LIL_DIM}dismiss${LIL_RESET}${LIL_GRAY}]${LIL_RESET}  ${LIL_GRAY}[${LIL_RESET}${LIL_AMBER}^R ⌘⏎${LIL_RESET} ${LIL_BOLD}${LIL_GREEN}RUN${LIL_RESET}${LIL_GRAY}]${LIL_RESET}  ${LIL_GRAY}[${LIL_RESET}${LIL_AMBER}^Y ⌘C${LIL_RESET} ${LIL_DIM}copy${LIL_RESET}${LIL_GRAY}]${LIL_RESET}  ${LIL_GRAY}[${LIL_RESET}${LIL_AMBER}✏${LIL_RESET} ${LIL_DIM}type to reply${LIL_RESET}${LIL_GRAY}]${LIL_RESET}"
 }
 
 # ---------------------------------------------------------------------------
@@ -271,6 +451,7 @@ _lil_scratchpad_box() {
 # ---------------------------------------------------------------------------
 _lil_followup() {
   local buf="$1"
+  local color="${2:-$LIL_GREEN}"
   local key extra
   LIL_FOLLOWUP=""
   while true; do
@@ -289,7 +470,7 @@ _lil_followup() {
       [[:print:]]) buf+="$key" ;;
       *) ;;
     esac
-    printf '\r\033[K %s› %s%s' "$LIL_GREEN" "$buf" "$LIL_RESET"
+    printf '\r\033[K %s› %s%s' "$color" "$buf" "$LIL_RESET"
   done
   printf '\r\033[K'
   LIL_FOLLOWUP="$buf"
@@ -306,7 +487,7 @@ _lil_run() {
 _lil_copy() {
   local cmd="$1"
   printf %s "$cmd" | pbcopy
-  print -r -- "${LIL_GREEN} 󰌑 copied to clipboard, boss.${LIL_RESET}"
+  print -r -- "${LIL_GREEN} ☑ copied — go get 'em, boss.${LIL_RESET}"
 }
 
 # ---------------------------------------------------------------------------
@@ -341,10 +522,12 @@ _lil_loop() {
             q|Q) return 0 ;;
           esac
         fi
-        _lil_followup "$key"
+        local pc="$LIL_GREEN"
+        [[ -n "$cmd" ]] && pc="$LIL_AMBER"
+        _lil_followup "$key" "$pc"
         if (( $? == 0 )); then
           _lil_invoke "$LIL_FOLLOWUP" || return 2
-          _lil_print_answer "$LIL_ANSWER"
+          _lil_render "$(_lil_strip_cmd "$LIL_ANSWER")"
           newcmd="$(_lil_extract_cmd "$LIL_ANSWER")"
           if [[ -n "$newcmd" ]]; then
             cmd="$newcmd"
@@ -357,12 +540,6 @@ _lil_loop() {
       *) ;;                                           # unknown control char: no-op
     esac
   done
-}
-
-_lil_print_answer() {
-  local text="$1"
-  [[ -n "$text" ]] || return 0
-  print -r -- "$text" | sed 's/^/  /'
 }
 
 # ---------------------------------------------------------------------------
@@ -383,7 +560,7 @@ lil() {
     if ! _lil_invoke "$prompt"; then
       return 2
     fi
-    _lil_print_answer "$LIL_ANSWER"
+    _lil_render "$(_lil_strip_cmd "$LIL_ANSWER")"
     if [[ -t 0 ]]; then
       local cmd
       cmd="$(_lil_extract_cmd "$LIL_ANSWER")"
