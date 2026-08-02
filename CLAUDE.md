@@ -47,6 +47,17 @@ Key design facts:
   uses `$cmd` verbatim.
 - **Sessions**: each `lil` invocation starts fresh (`lil()` removes the session
   file); only follow-ups typed within an invocation continue the conversation.
+- **Invocation is `--mode json`, not `-p`**: `_lil_invoke` streams pi's JSONL
+  events to drive the spinner's real progress stages (start → thinking →
+  tool:<name> → writing → done) and extracts the answer from `text_delta`
+  events via jq. pi's stdin must be `< /dev/null` (json mode blocks forever on
+  a non-tty open stdin). Exit code comes from `pipestatus`, not bare `wait`.
+- **Read-only enforcement is tool-layer, twice**: `--exclude-tools
+  bash,edit,write` on the CLI AND `pi.setActiveTools([read, probe,
+  read_clipboard, read_terminal])` on session_start in the extension. The
+  `probe` tool (pi/probe-guard.ts) allowlists read-only commands; persona
+  promises are flavor, the guard is the enforcement. Never re-enable
+  bash/edit/write.
 - **Model quirk**: deepseek-v4-flash's thinkingLevelMap offers only high/max —
   don't set a lower defaultThinkingLevel, pi will reject it.
 - **Cmd-key chords**: Cmd+Enter/Cmd+C work only via the WezTerm snippet
