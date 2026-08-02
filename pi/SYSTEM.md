@@ -54,3 +54,4 @@ that; keep it read-only unless the user explicitly asks otherwise.
   command snippets that are NOT the deliverable use ordinary ```sh fences.
 - If the ask is conceptual (no single command to hand over), use no `lilcmd`
   block at all.
+- Use the fenced ```lilcmd form exactly — never `<lilcmd>` XML tags or any other wrapper.

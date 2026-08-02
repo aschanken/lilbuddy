@@ -139,9 +139,40 @@ _lil_invoke() {
 }
 
 # ---------------------------------------------------------------------------
-# lilcmd extraction: LAST ```lilcmd fence; content until the next ``` fence.
-# Prints the command, or nothing + exit 1 when no block exists.
+# lilcmd extraction: LAST ```lilcmd fence OR <lilcmd> tag block, by position.
+# Prints the command (RC=0) or nothing + RC=1 when no well-formed block exists.
 # ---------------------------------------------------------------------------
+_lil_find_block() {
+  local text="$1"
+  local -a lines=("${(f)text}")
+  local i last=-1 last_kind="" line
+  for (( i = 1; i <= ${#lines[@]}; i++ )); do
+    line="${lines[$i]}"
+    if [[ "$line" =~ '^[[:space:]]*```lilcmd[[:space:]]*$' ]]; then
+      last=$i; last_kind="fence"
+    elif [[ "$line" =~ '^[[:space:]]*<lilcmd>[[:space:]]*$' ]]; then
+      last=$i; last_kind="tag"
+    fi
+  done
+  (( last > 0 )) || return 1
+  local close
+  if [[ "$last_kind" == "fence" ]]; then
+    close='^[[:space:]]*```[[:space:]]*$'
+  else
+    close='^[[:space:]]*</lilcmd>[[:space:]]*$'
+  fi
+  local j end=-1
+  for (( j = last + 1; j <= ${#lines[@]}; j++ )); do
+    if [[ "${lines[$j]}" =~ $close ]]; then
+      end=$j
+      break
+    fi
+  done
+  (( end > 0 )) || return 1
+  print -r -- "$last $end $last_kind"
+  return 0
+}
+
 _lil_extract_cmd() {
   local text
   if (( $# > 0 )); then
@@ -149,29 +180,44 @@ _lil_extract_cmd() {
   else
     text="$(cat)"
   fi
-  local -a lines
-  lines=("${(f)text}")
-  local i last=-1
-  for (( i = 1; i <= ${#lines[@]}; i++ )); do
-    if [[ "${lines[$i]}" =~ '^[[:space:]]*```lilcmd[[:space:]]*$' ]]; then
-      last=$i
-    fi
-  done
-  if (( last < 0 )); then
-    return 1
-  fi
+  local spec
+  spec="$(_lil_find_block "$text")" || return 1
+  local start="${spec%% *}"
+  local rest="${spec#* }"
+  local end="${rest%% *}"
+  local -a lines=("${(f)text}")
   local -a out=()
-  local j=$((last + 1)) closed=0
-  while (( j <= ${#lines[@]} )); do
-    if [[ "${lines[$j]}" =~ '^[[:space:]]*```[[:space:]]*$' ]]; then
-      closed=1
-      break
-    fi
+  local j
+  for (( j = start + 1; j < end; j++ )); do
     out+=("${lines[$j]}")
-    j=$((j + 1))
   done
-  # End-of-input without a closing fence = malformed block; treat as none.
-  (( closed )) || return 1
+  print -r -- "${(F)out}"
+  return 0
+}
+
+# Strip the matched lilcmd block (tag/fence lines included) from the answer,
+# trimming trailing blank lines. No block present -> input unchanged (RC=0).
+_lil_strip_cmd() {
+  local text
+  if (( $# > 0 )); then
+    text="$1"
+  else
+    text="$(cat)"
+  fi
+  local spec
+  spec="$(_lil_find_block "$text")" || { print -r -- "$text"; return 0; }
+  local start="${spec%% *}"
+  local rest="${spec#* }"
+  local end="${rest%% *}"
+  local -a lines=("${(f)text}")
+  local -a out=()
+  local j
+  for (( j = 1; j <= ${#lines[@]}; j++ )); do
+    (( j < start || j > end )) && out+=("${lines[$j]}")
+  done
+  while (( ${#out[@]} > 0 )) && [[ -z "${out[-1]//[[:space:]]/}" ]]; do
+    out[-1]=()
+  done
   print -r -- "${(F)out}"
   return 0
 }
