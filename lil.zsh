@@ -74,47 +74,62 @@ _lil_uservar() {
 }
 
 # ---------------------------------------------------------------------------
-# Spinner v3: Katamari marquee — the stage message scrolls left→right, each char
-# one step along a rainbow ramp (the TEXT is the rainbow). Stage comes from the
-# pi --mode json event tracker ($LIL_RUNTIME/stage). Timeout at 120s unchanged.
+# Spinner v4: RobCo decryption — the stage message materializes from scrambled
+# glyph junk, Fallout-terminal-hacking style. No scrolling: a STATIC ramp
+# gradient locks chars in 2 per frame, one random locked char glitches back to
+# junk every 7th frame once fully locked, and the cursor blinks 4/4 frames.
+# Stage comes from the pi --mode json event tracker ($LIL_RUNTIME/stage).
+# Timeout at 120s unchanged.
 # ---------------------------------------------------------------------------
 
-# 256-color rainbow ramp; color cycles by character position within the message.
+# 256-color gradient ramp; color cycles by character position within the message
+# (STATIC — it never moves; the animation is the flickering junk, not the
+# gradient). i%12 for 1-based i would hit an empty arr[0] at 12,24,...; the
+# (i-1)%12+1 form is the same 12-cycle with every slot valid.
 _lil_ramp=(196 208 214 226 118 46 49 51 45 39 93 201)
 
-# Per-message tile cache: message → array of (SGR-colored char | plain space),
-# with 8 uncolored gap spaces appended. Rebuilt only when the stage message
-# changes, so the frame loop stays O(W).
-_LIL_TILE_MSG=""
-_LIL_TILE_LEN=0
-_LIL_TILE=()
+# Decrypt-junk pool (single-byte ASCII only — never multibyte).
+_LIL_JUNK=('!' '@' '#' '$' '%' '&' '*' '+' '=' '?' '/' '\' '|' '<' '>' '[' ']' '{' '}' '~' '^' '0' '1')
 
-# Print one marquee frame's bar (no \r prefix — the loop adds it): a leading
-# space, then the W-column window of the tiled message at the given scroll
-# offset, then LIL_RESET. Each +1 offset shifts the text right 2 columns.
-_lil_marquee_frame() {
-  local msg="$1" offset="$2" width="$3"
-  local i mlen c p ti out=""
-  if [[ "$msg" != "$_LIL_TILE_MSG" ]]; then
-    _LIL_TILE_MSG="$msg"
-    _LIL_TILE=()
-    mlen=${#msg}
-    _LIL_TILE_LEN=$(( mlen + 8 ))
-    for (( i = 1; i <= mlen; i++ )); do
-      _LIL_TILE[$i]=$'\e[38;5;'"${_lil_ramp[(( (i - 1) % 12 ) + 1)]}m${msg[i]}"
-    done
-    for (( i = mlen + 1; i <= _LIL_TILE_LEN; i++ )); do
-      _LIL_TILE[$i]=' '
-    done
-  fi
-  # Absolute stream position p = column − 2·offset; as offset grows the window
-  # moves left over the tiled stream, so text travels left→right on screen.
-  for (( c = 0; c < width; c++ )); do
-    p=$(( c - 2 * offset ))
-    ti=$(( ((p % _LIL_TILE_LEN) + _LIL_TILE_LEN) % _LIL_TILE_LEN + 1 ))
-    out+="${_LIL_TILE[$ti]}"
+# Print ONE decrypt frame line (no \r/\033[K — the spinner loop adds those):
+# amber "☢ " prefix + per-char message rendering + amber " ▊" cursor.
+# Args: <message> <locked-csv> <glitch-index> <cursor-on>.
+#   locked-csv: comma-separated 1-based message indices whose TRUE char renders
+#     in the static ramp gradient; every other non-space char renders random
+#     junk in dim green (41). Spaces always render as spaces.
+#   glitch-index: 0 = none, else that index renders junk this single frame
+#     (wins over locked).
+#   cursor-on: 1/0 — only the trailing ▊/blank cell differs.
+# Deterministic given its args EXCEPT the junk glyph choice (RANDOM per call).
+_lil_decrypt_frame() {
+  local msg="$1" locked_csv="$2" glitch="$3" cursor="$4"
+  local -A locked
+  local i ch out=""
+  local -a idxs=("${(@s:,:)locked_csv}")
+  for i in "${idxs[@]}"; do
+    locked[$i]=1
   done
-  print -rn -- " ${out}${LIL_RESET}"
+  out+="${LIL_AMBER}☢ "
+  for (( i = 1; i <= ${#msg}; i++ )); do
+    ch="${msg[i]}"
+    if [[ "$ch" == ' ' ]]; then
+      out+=' '
+    elif (( glitch > 0 && glitch == i )); then
+      out+="${LIL_DIM}${_LIL_JUNK[$(( RANDOM % ${#_LIL_JUNK[@]} + 1 ))]}"
+    elif (( locked[$i] )); then
+      out+=$'\e[38;5;'"${_lil_ramp[(( ((i - 1) % 12) + 1 ))]}m${ch}"
+    else
+      out+="${LIL_DIM}${_LIL_JUNK[$(( RANDOM % ${#_LIL_JUNK[@]} + 1 ))]}"
+    fi
+  done
+  out+="${LIL_AMBER}"
+  if (( cursor == 1 )); then
+    out+=" ▊"
+  else
+    out+="  "
+  fi
+  out+="${LIL_RESET}"
+  print -rn -- "$out"
 }
 
 # Stage-file reader (separate tiny helper so tests can drive the spinner's
@@ -160,14 +175,14 @@ _lil_track_stage() {
 _lil_spinner() {
   local pid="$1"
   local start=$SECONDS
-  local cols="${COLUMNS:-80}"
-  (( cols < 20 )) && cols=80
-  local W=$(( (cols < 120 ? cols : 120) - 2 ))
-  local offset=0 stage="" prevstage="" msg="" gpid
-  local -A stage_msg
-  stage_msg[start]="Winding up the cosmos… your question rolls forth…"
-  stage_msg[thinking]="The King of All Terminals ponders your tiny, precious question…"
-  stage_msg[writing]="Presenting to the King… he composes his royal reply…"
+  local stage="" prevstage="" msg="" prevmsg="" msg_full=""
+  local -i framecount=0 lockpos=0 heavy=0
+  local -a perm=() locked=() newlocked=() news=() locked_idx=()
+  local glitch=0 cursor_on=1 locked_csv="" gpid
+  local nlen=0 olen=0 i=0 j=0 tmp=0 n=0 k=0
+  # NOTE: every local is declared up here, before the loop. In an interactive
+  # shell, `local` inside a while-loop body makes zsh echo `var=value` lines
+  # into stdout after each iteration — the spinner must never leak that noise.
   _LIL_TIMEOUT=0
   while kill -0 "$pid" 2>/dev/null; do
     if (( SECONDS - start > LIL_TIMEOUT_SECS )); then
@@ -179,21 +194,93 @@ _lil_spinner() {
     fi
     stage="$(_lil_read_stage)"
     [[ -z "$stage" ]] && stage="start"
-    if [[ "$stage" != "$prevstage" ]]; then
-      prevstage="$stage"
-      offset=0
-    fi
     case "$stage" in
-      tool:*) msg="Rolling over ${stage#tool:}… it sticks to the katamari so nicely…" ;;
-      *)      msg="${stage_msg[$stage]:-${stage_msg[start]}}" ;;
+      tool:*) msg="ACCESSING ${(U)stage#tool:}" ;;
+      thinking) msg="OVERSEER IS THINKING" ;;
+      writing) msg="DECRYPTING RESPONSE" ;;
+      *) msg="ESTABLISHING VAULT LINK" ;;
     esac
-    if (( SECONDS - start > 25 )); then
-      msg+=" My, what a weighty ball this is…"
+    if [[ "$stage" != "$prevstage" ]]; then
+      # (re)key to the new transmission: carry locked state only where old and
+      # new messages share the same char at the same position; everything else
+      # restarts as junk, and the lock order is rebuilt from the unlocked ones.
+      newlocked=()
+      nlen=${#msg}
+      olen=${#prevmsg}
+      for (( i = 1; i <= nlen; i++ )); do
+        if (( i <= olen )) && [[ "${msg[i]}" == "${prevmsg[i]}" ]] && (( locked[i] )); then
+          newlocked[i]=1
+        else
+          newlocked[i]=0
+        fi
+      done
+      locked=("${newlocked[@]}")
+      perm=()
+      for (( i = 1; i <= nlen; i++ )); do
+        [[ "${msg[i]}" == ' ' ]] && continue
+        (( locked[i] )) && continue
+        perm+=($i)
+      done
+      n=${#perm[@]}
+      for (( i = n; i > 1; i-- )); do          # Fisher–Yates shuffle
+        j=$(( RANDOM % i + 1 ))
+        tmp=${perm[i]}; perm[i]=${perm[j]}; perm[j]=$tmp
+      done
+      lockpos=0
+      heavy=0
+      prevstage="$stage"
+      prevmsg="$msg"
     fi
+    msg_full="$msg"
+    if (( SECONDS - start > 25 )); then
+      msg_full+=" [HEAVY LOAD]"
+      if (( ! heavy )); then
+        heavy=1
+        # the appended chars join the effect: appended to the lock order,
+        # shuffled, so they lock in alongside the original message
+        news=()
+        for (( i = ${#msg} + 1; i <= ${#msg_full}; i++ )); do
+          [[ "${msg_full[i]}" == ' ' ]] && continue
+          news+=($i)
+        done
+        n=${#news[@]}
+        for (( i = n; i > 1; i-- )); do
+          j=$(( RANDOM % i + 1 ))
+          tmp=${news[i]}; news[i]=${news[j]}; news[j]=$tmp
+        done
+        perm+=( "${news[@]}" )
+      fi
+    fi
+    # lock 2 indices per frame, in permutation order
+    k=0
+    while (( k < 2 && lockpos < ${#perm[@]} )); do
+      lockpos=$(( lockpos + 1 ))
+      locked[${perm[lockpos]}]=1
+      k=$(( k + 1 ))
+    done
+    # idle glitch: when everything is locked, every 7th frame one random locked
+    # index renders as junk for a single frame, then restores
+    glitch=0
+    if (( lockpos >= ${#perm[@]} )) && (( framecount % 7 == 0 )); then
+      locked_idx=()
+      for (( i = 1; i <= ${#msg_full}; i++ )); do
+        (( locked[i] )) && locked_idx+=($i)
+      done
+      if (( ${#locked_idx[@]} > 0 )); then
+        glitch=${locked_idx[$(( RANDOM % ${#locked_idx[@]} + 1 ))]}
+      fi
+    fi
+    # cursor blink: on 4 frames / off 4 frames
+    if (( (framecount / 4) % 2 == 0 )); then cursor_on=1; else cursor_on=0; fi
+    locked_csv=""
+    for (( i = 1; i <= ${#msg_full}; i++ )); do
+      (( locked[i] )) && locked_csv+="${i},"
+    done
+    locked_csv="${locked_csv%,}"
     printf '\r\033[K'
-    _lil_marquee_frame "$msg" "$offset" "$W"
-    offset=$(( offset + 1 ))
+    _lil_decrypt_frame "$msg_full" "$locked_csv" "$glitch" "$cursor_on"
     sleep 0.07
+    framecount=$(( framecount + 1 ))
   done
   printf '\r\033[K'
 }

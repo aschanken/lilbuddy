@@ -1,12 +1,17 @@
 #!/bin/zsh
-# spinner-fixture.zsh — fixture-driven tests for the Katamari marquee spinner v3
-# and the pi --mode json stage/extraction pipeline.
+# spinner-fixture.zsh — fixture-driven tests for the RobCo decryption spinner v4
+# (_lil_decrypt_frame) and the pi --mode json stage/extraction pipeline.
+# The decrypt frame is deterministic given its args EXCEPT the junk glyph choice,
+# so these tests assert structure (color/char per position, junk-pool
+# membership), never exact junk chars.
 # Run from the repo root:  zsh tests/spinner-fixture.zsh
 set -e
 cd "${0:A:h}/.." || exit 1
 source ./lil.zsh
 
 ESC=$'\e'
+RESET="${ESC}[0m"
+SGR_RE="$(printf '%s\[38;5;([0-9]+)m(.)' $ESC)"
 fail=0
 check() {
   if eval "$2"; then
@@ -17,48 +22,127 @@ check() {
   fi
 }
 
-MSG="The King of All Terminals ponders your tiny, precious question…"
-f0="$(COLUMNS=80 _lil_marquee_frame "$MSG" 0 58)"
-f6="$(COLUMNS=80 _lil_marquee_frame "$MSG" 6 58)"
+# Parse a decrypt frame into "color<TAB>char" tokens; unstyled cells are "-".
+parse_frame() {
+  local s="$1"
+  local -a out=()
+  while [[ -n "$s" ]]; do
+    if [[ "$s" == $ESC* ]]; then
+      if [[ "$s" =~ $SGR_RE ]]; then
+        out+=("${match[1]}"$'\t'"${match[2]}")
+        s="${s:${#MATCH}}"
+      else
+        break
+      fi
+    else
+      out+=("-"$'\t'"${s[1]}")
+      s="${s:1}"
+    fi
+  done
+  print -r -- "${(F)out}"
+}
 
-# --- 1. frame shape: distinct ramp codes, chars in message order, [0m at end
-RESET="${ESC}[0m"
-check "frame has multiple distinct ramp codes" \
-  '[[ $(print -rn -- "$f0" | grep -o $ESC"\[38;5;[0-9]*m" | sort -u | wc -l | tr -d " ") -ge 6 ]]'
-check "frame ends with [0m (LIL_RESET)" \
-  '[[ "$f0" == *"$RESET" ]]'
-plain0="$(print -rn -- "$f0" | sed $'s/\x1b\\[[0-9;]*m//g')"
-check "chars in message order at offset 0" \
-  '[[ "${plain0# }" == "${MSG:0:58}" ]]'
+T_PREFIX="214"$'\t'"☢"
+T_SPACE="-"$'\t'" "
+T_CUR_ON="-"$'\t'"▊"
+T_CUR_OFF="-"$'\t'" "
 
-# --- 2. rainbow-per-char: first 12 visible chars follow the ramp order
-frame="${f0# }"                       # drop leading space
-frame="${frame%$RESET}"               # drop trailing reset
-RB_RE="$(printf '^%s\[38;5;([0-9]+)m(.)' $'\e')"   # zsh =~ needs the regex in a var
-got_colors=() got_chars_s=""
-for (( i = 1; i <= 12; i++ )); do
-  if [[ "$frame" =~ $RB_RE ]]; then
-    got_colors+=("${match[1]}")
-    got_chars_s+="${match[2]}"
-    frame="${frame:${#MATCH}}"
+MSG="OVERSEER IS THINKING"   # 20 chars; spaces at 9 and 12
+ALL_LOCKED="1,2,3,4,5,6,7,8,10,11,13,14,15,16,17,18,19,20"
+
+# --- 1. none locked: amber ☢ prefix, every non-space char is dim-green junk
+#        from the pool, spaces preserved, amber ▊ cursor + [0m at the end
+f="$(COLUMNS=80 _lil_decrypt_frame "$MSG" "" 0 1)"
+toks=("${(@f)$(parse_frame "$f")}")
+check "frame opens with amber ☢ then a plain space" \
+  "[[ \"\${toks[1]}\" == \"\$T_PREFIX\" && \"\${toks[2]}\" == \"\$T_SPACE\" ]]"
+check "frame ends with amber ▊ cursor and [0m reset" \
+  "[[ \"\${toks[-1]}\" == \"\$T_CUR_ON\" && \"\${toks[-2]}\" == \"214\"$'\t'\" \" && \"\$f\" == *\"\$RESET\" ]]"
+check "token count = prefix + message + cursor cells" \
+  '[[ ${#toks[@]} -eq $(( 2 + ${#MSG} + 2 )) ]]'
+allgood=1
+for (( i = 1; i <= ${#MSG}; i++ )); do
+  tok="${toks[$(( i + 2 ))]}"
+  col="${tok%%$'\t'*}"
+  ch="${tok#*$'\t'}"
+  if [[ "${MSG[i]}" == ' ' ]]; then
+    [[ "$tok" == "$T_SPACE" ]] || allgood=0
   else
-    got_colors+=("?"); got_chars_s+="?"
+    [[ "$col" == "41" && ${_LIL_JUNK[(Ie)$ch]} -gt 0 ]] || allgood=0
   fi
 done
-check "rainbow colors follow ramp order" \
-  '[[ "${got_colors[@]}" == "${_lil_ramp[@]}" ]]'
-check "rainbow chars follow message order" \
-  '[[ "$got_chars_s" == "${MSG:0:12}" ]]'
+check "none-locked: every non-space char is dim-green junk, spaces preserved" \
+  '[[ $allgood -eq 1 ]]'
 
-# --- 3. offset shift is left→right (offset 6 shows the message 12 cols right)
-plain6="$(print -rn -- "$f6" | sed $'s/\x1b\\[[0-9;]*m//g')"
-plain6_nobar="${plain6# }"
-check "offset 6 shifts message right by 12 columns" \
-  '[[ "${plain6_nobar:12:14}" == "${MSG:0:14}" ]]'
-check "offset 6 keeps the bar at column 2 (leading space)" \
-  '[[ "${plain6[1]}" == " " ]]'
+# --- 2. partial lock "1,2,3,10": those are TRUE chars in the static ramp
+#        colors, everything else is junk
+f="$(COLUMNS=80 _lil_decrypt_frame "$MSG" "1,2,3,10" 0 1)"
+toks=("${(@f)$(parse_frame "$f")}")
+check "locked 1 → ramp[1]=196 'O'"   '[[ "${toks[3]}" == "196"$'"'"'\t'"'"'"O" ]]'
+check "locked 2 → ramp[2]=208 'V'"   '[[ "${toks[4]}" == "208"$'"'"'\t'"'"'"V" ]]'
+check "locked 3 → ramp[3]=214 'E'"   '[[ "${toks[5]}" == "214"$'"'"'\t'"'"'"E" ]]'
+check "locked 10 → ramp[10]=39 'I'"  '[[ "${toks[12]}" == "39"$'"'"'\t'"'"'"I" ]]'
+allgood=1
+for (( i = 1; i <= ${#MSG}; i++ )); do
+  tok="${toks[$(( i + 2 ))]}"
+  col="${tok%%$'\t'*}"
+  ch="${tok#*$'\t'}"
+  (( i == 1 || i == 2 || i == 3 || i == 10 )) && continue
+  if [[ "${MSG[i]}" == ' ' ]]; then
+    [[ "$tok" == "$T_SPACE" ]] || allgood=0
+  else
+    [[ "$col" == "41" && ${_LIL_JUNK[(Ie)$ch]} -gt 0 ]] || allgood=0
+  fi
+done
+check "partial-lock: all other non-space chars are dim-green junk" \
+  '[[ $allgood -eq 1 ]]'
 
-# --- 4. JSONL answer extraction: clean markdown, no JSON artifacts
+# --- 3. all locked + glitch 5: only index 5 is junk this frame; running twice
+#        may change the junk glyph but never the locked structure
+t1=("${(@f)$(parse_frame "$(COLUMNS=80 _lil_decrypt_frame "$MSG" "$ALL_LOCKED" 5 1)")}")
+t2=("${(@f)$(parse_frame "$(COLUMNS=80 _lil_decrypt_frame "$MSG" "$ALL_LOCKED" 5 1)")}")
+allgood=1
+for (( i = 1; i <= ${#MSG}; i++ )); do
+  tok="${t1[$(( i + 2 ))]}"
+  col="${tok%%$'\t'*}"
+  ch="${tok#*$'\t'}"
+  if [[ "${MSG[i]}" == ' ' ]]; then
+    [[ "$tok" == "$T_SPACE" ]] || allgood=0
+  elif (( i == 5 )); then
+    [[ "$col" == "41" && ${_LIL_JUNK[(Ie)$ch]} -gt 0 ]] || allgood=0   # glitched: junk
+  else
+    [[ "$col" == "${_lil_ramp[(( ((i - 1) % 12) + 1 ))]}" && "$ch" == "${MSG[i]}" ]] || allgood=0
+  fi
+done
+check "all-locked+glitch: index 5 is junk, every other char true in static ramp" \
+  '[[ $allgood -eq 1 ]]'
+same_except_glitch=1
+for (( i = 1; i <= ${#t1[@]}; i++ )); do
+  (( i == 7 )) && continue      # message index 5 → token 5+2
+  [[ "${t1[$i]}" == "${t2[$i]}" ]] || same_except_glitch=0
+done
+check "glitch run twice: locked structure identical outside the glitched cell" \
+  '[[ $same_except_glitch -eq 1 ]]'
+
+# --- 4. cursor: on vs off differ only in the trailing ▊ cell
+# Seed RANDOM before each call so the junk is identical in both frames and the
+# only remaining difference is the cursor cell (zsh reseeds subshell RANDOM).
+RANDOM=7
+on=("${(@f)$(parse_frame "$(COLUMNS=80 _lil_decrypt_frame "$MSG" "" 1 1)")}")
+RANDOM=7
+off=("${(@f)$(parse_frame "$(COLUMNS=80 _lil_decrypt_frame "$MSG" "" 1 0)")}")
+check "cursor on/off have the same token count" '[[ ${#on[@]} -eq ${#off[@]} ]]'
+same_except_cur=1
+for (( i = 1; i <= ${#on[@]}; i++ )); do
+  if (( i == ${#on[@]} )); then
+    [[ "${on[$i]}" == "$T_CUR_ON" && "${off[$i]}" == "$T_CUR_OFF" ]] || same_except_cur=0
+  else
+    [[ "${on[$i]}" == "${off[$i]}" ]] || same_except_cur=0
+  fi
+done
+check "cursor on/off differ only in the trailing ▊ cell" '[[ $same_except_cur -eq 1 ]]'
+
+# --- 5. JSONL answer extraction: clean markdown, no JSON artifacts
 tmp="$(mktemp -d)"
 printf '%s\n' \
   '{"type":"session","version":3}' \
@@ -75,7 +159,7 @@ FENCE='```lilcmd'
 check "extraction keeps the lilcmd fence intact" \
   '[[ "$answer" == *"$FENCE"* && "$answer" == *"ls -la"* ]]'
 
-# --- 5. stage machine: start → thinking → tool:<name> → writing → done
+# --- 6. stage machine: start → thinking → tool:<name> → writing → done
 stage_run="$(mktemp -d)"
 LIL_RUNTIME="$stage_run"
 _LIL_WAS_TOOL=0
@@ -97,7 +181,7 @@ check "stage sequence is start→thinking→tool→writing→done" \
 check "stage file ends at done" \
   '[[ "$(<"$stage_run/stage")" == "done" ]]'
 
-# --- 6. extractor fence test (```lilcmd block)
+# --- 7. extractor fence test (```lilcmd block)
 fenced=$'Prose above.\n```lilcmd\nls -la\n```\nMore prose.'
 cmd="$(_lil_extract_cmd "$fenced")"
 check "extractor finds the lilcmd fence body" \

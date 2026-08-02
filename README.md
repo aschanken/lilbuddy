@@ -100,7 +100,7 @@ lil "…"  (zsh function, current shell)
    │      --exclude-tools bash,edit,write \
    │      --session ~/.cache/lil/session \
    │      --append-system-prompt "$(fingerprint)" "<question>"
-   │        │  katamari marquee spinner (stage-driven); JSONL → temp file; 120s kill
+   │        │  RobCo decryption spinner (stage-driven); JSONL → temp file; 120s kill
    │        └─ pi → DeepSeek V4 Flash → SYSTEM.md persona (lilbuddy/pi/SYSTEM.md)
    │              read-only tools only: read_clipboard / read_terminal snapshots,
    │              guarded `probe` for live inspection (strict allowlist)
