@@ -123,6 +123,7 @@ _lil_invoke() {
   (
     cd "$LIL_RUNTIME" || exit 1
     PI_CODING_AGENT_DIR="$LIL_HOME/pi" pi -p -nc \
+      --exclude-tools bash,edit,write \
       --session "$LIL_RUNTIME/session" \
       --append-system-prompt "$(cat "$LIL_RUNTIME/fingerprint.txt")" \
       "$prompt" > "$outfile" 2> "$errfile" &
