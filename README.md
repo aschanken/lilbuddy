@@ -54,9 +54,9 @@ While the scratchpad is open (stdin is a terminal):
 
 | Key | Action |
 |-----|--------|
-| ⏎ / Esc / `q` | dismiss, back to zsh |
-| ⌘Enter / Ctrl+R / `r` | run the command in this shell (history included) |
-| ⌘c / Ctrl+Y / `c` `y` | copy the command to the clipboard |
+| ⏎ / Esc / `q` `Q` | dismiss, back to zsh |
+| ⌘Enter / Ctrl+R / `r` `R` | run the command in this shell (history included) |
+| ⌘c / Ctrl+Y / `c` `C` `y` `Y` | copy the command to the clipboard |
 | any other char | start a follow-up question in the same conversation |
 
 Follow-up answers can hand over a new scratchpad command.
