@@ -1,6 +1,7 @@
 pi/sessions/
 pi/*.bak
 pi/mcp-cache.json
+pi/models-store.json
 pi/run-history.jsonl
 pi/auth.json
 *.log
