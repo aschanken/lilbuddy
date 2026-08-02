@@ -1,0 +1,7 @@
+pi/sessions/
+pi/*.bak
+pi/mcp-cache.json
+pi/run-history.jsonl
+pi/auth.json
+*.log
+.DS_Store
