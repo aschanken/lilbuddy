@@ -184,6 +184,11 @@ _lil_spinner() {
   # shell, `local` inside a while-loop body makes zsh echo `var=value` lines
   # into stdout after each iteration — the spinner must never leak that noise.
   _LIL_TIMEOUT=0
+  # Hide the hardware cursor for the duration — the frame renders its own ▊.
+  # The always-block restores it even if ^C aborts the loop mid-animation;
+  # without it the shell would be left cursorless.
+  printf '\033[?25l'
+  {
   while kill -0 "$pid" 2>/dev/null; do
     if (( SECONDS - start > LIL_TIMEOUT_SECS )); then
       [[ -f "$LIL_RUNTIME/last.pid" ]] && gpid="$(<"$LIL_RUNTIME/last.pid")"
@@ -283,6 +288,9 @@ _lil_spinner() {
     framecount=$(( framecount + 1 ))
   done
   printf '\r\033[K'
+  } always {
+    printf '\033[?25h'
+  }
 }
 
 # ---------------------------------------------------------------------------
