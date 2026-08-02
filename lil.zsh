@@ -239,34 +239,27 @@ _lil_sayings_refresh() {
 _lil_spinner() {
   local pid="$1"
   local start=$SECONDS
-  local stage="" prevstage="" msg="" prevmsg="" msg_full=""
+  local stage="" prevstage="" stagemsg="" msg="" prevmsg="" msg_full=""
   local -i framecount=0 lockpos=0 heavy=0
   local -a perm=() locked=() newlocked=() news=() locked_idx=()
   local glitch=0 cursor_on=1 locked_csv="" gpid
   local nlen=0 olen=0 i=0 j=0 tmp=0 n=0 k=0
   local poolfile="$LIL_RUNTIME/sayings.txt" usefile="$LIL_RUNTIME/sayings.uses"
   local -a pool=()
-  local pick="" uses=0 sayline=0 distress=0 curcolor=214 sayw=0
+  local pick="" prevpick="" uses=0 dwellstart=0 distress=0 curcolor=214 sayw=0
   # NOTE: every local is declared up here, before the loop. In an interactive
   # shell, `local` inside a while-loop body makes zsh echo `var=value` lines
   # into stdout after each iteration — the spinner must never leak that noise.
   _LIL_TIMEOUT=0
-  # Sayings: seed the live pool from the repo seed if missing/empty, show one
-  # random line above the animation, bump the use counter and refresh the pool
-  # (every 5th use) in a detached background subshell — never waited on.
+  # Sayings: seed the live pool from the repo seed if missing/empty, bump the
+  # use counter and refresh the pool (every 5th use) in a detached background
+  # subshell — never waited on. Random lines cycle through the decrypt
+  # animation after a stage message has fully locked.
   if [[ ! -s "$poolfile" ]] && [[ -s "$LIL_HOME/sayings.txt" ]]; then
     cp "$LIL_HOME/sayings.txt" "$poolfile"
   fi
   if [[ -s "$poolfile" ]]; then
     pool=("${(f)$(<"$poolfile")}")
-    if (( ${#pool[@]} > 0 )); then
-      pick="${pool[$(( RANDOM % ${#pool[@]} + 1 ))]}"
-      # COLUMNS<=0 means "no known width" (zsh non-tty value) — fall back to 80.
-      sayw=$(( (COLUMNS > 0 ? COLUMNS : 80) - 6 ))
-      (( sayw < 1 )) && sayw=1
-      print -r -- $'\033[38;5;244m\033[3m  ░ '"${pick[1,sayw]}"$'\033[0m'
-      sayline=1
-    fi
   fi
   uses=0
   [[ -f "$usefile" ]] && uses="$(<"$usefile")"
@@ -291,15 +284,36 @@ _lil_spinner() {
     stage="$(_lil_read_stage)"
     [[ -z "$stage" ]] && stage="start"
     case "$stage" in
-      tool:*) msg="ACCESSING ${(U)stage#tool:}" ;;
-      thinking) msg="OVERSEER IS THINKING" ;;
-      writing) msg="DECRYPTING RESPONSE" ;;
-      *) msg="ESTABLISHING VAULT LINK" ;;
+      tool:*) stagemsg="ACCESSING ${(U)stage#tool:}" ;;
+      thinking) stagemsg="OVERSEER IS THINKING" ;;
+      writing) stagemsg="DECRYPTING RESPONSE" ;;
+      *) stagemsg="ESTABLISHING VAULT LINK" ;;
     esac
+    # Message selection: stage transitions take the stage message immediately;
+    # otherwise a fully-locked message dwells 2s, then swaps to a random pool
+    # saying so the decrypt scramble cycles sayings through the animation.
     if [[ "$stage" != "$prevstage" ]]; then
-      # (re)key to the new transmission: carry locked state only where old and
-      # new messages share the same char at the same position; everything else
-      # restarts as junk, and the lock order is rebuilt from the unlocked ones.
+      msg="$stagemsg"
+    elif (( lockpos >= ${#perm[@]} )); then
+      if (( dwellstart == 0 )); then
+        dwellstart=$SECONDS
+      elif (( SECONDS - dwellstart >= 2 )) && (( ${#pool[@]} > 0 )); then
+        pick="${pool[$(( RANDOM % ${#pool[@]} + 1 ))]}"
+        if (( ${#pool[@]} > 1 )) && [[ "$pick" == "$prevpick" ]]; then
+          pick="${pool[$(( RANDOM % ${#pool[@]} + 1 ))]}"
+        fi
+        prevpick="$pick"
+        # COLUMNS<=0 means "no known width" (zsh non-tty value) — fall back to 80.
+        sayw=$(( (COLUMNS > 0 ? COLUMNS : 80) - 8 ))
+        (( sayw < 1 )) && sayw=1
+        msg="${(U)pick[1,sayw]}"
+      fi
+    fi
+    if [[ "$msg" != "$prevmsg" ]]; then
+      # (re)key to the new message (stage change or saying swap): carry locked
+      # state only where old and new messages share the same char at the same
+      # position; everything else restarts as junk, and the lock order is
+      # rebuilt from the unlocked ones.
       newlocked=()
       nlen=${#msg}
       olen=${#prevmsg}
@@ -326,6 +340,7 @@ _lil_spinner() {
       heavy=0
       prevstage="$stage"
       prevmsg="$msg"
+      dwellstart=0
     fi
     msg_full="$msg"
     if (( SECONDS - start > LIL_HEAVY_SECS )); then
@@ -386,14 +401,8 @@ _lil_spinner() {
     framecount=$(( framecount + 1 ))
   done
   } always {
-    if (( sayline )); then
-      # clear the animation line, up one, clear the saying line, restore cursor
-      printf '\r\033[K\033[1A\r\033[K\033[?25h'
-    else
-      # no saying line was printed — single-line cleanup so \033[1A never
-      # climbs into the banner above
-      printf '\r\033[K\033[?25h'
-    fi
+    # single-line cleanup: clear the animation line, restore the cursor
+    printf '\r\033[K\033[?25h'
   }
 }
 
