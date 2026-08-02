@@ -97,20 +97,26 @@ _lil_invoke() {
   local prompt="$1"
   local outfile="$LIL_RUNTIME/last.out"
   local errfile="$LIL_RUNTIME/last.err"
+  local rcfile="$LIL_RUNTIME/last.rc"
   _lil_snapshot
   _lil_fingerprint
   : > "$outfile"
+  : > "$rcfile"
+  # `&!` disowns the subshell so the interactive shell prints no "[N] pid"
+  # job-control line; the exit code is carried back via $rcfile instead of
+  # wait, which cannot wait on a disowned child.
   (
     cd "$LIL_RUNTIME" || exit 1
     PI_CODING_AGENT_DIR="$LIL_HOME/pi" pi -p -nc \
       --session "$LIL_RUNTIME/session" \
       --append-system-prompt "$(cat "$LIL_RUNTIME/fingerprint.txt")" \
       "$prompt" > "$outfile" 2> "$errfile"
-  ) &
+    print -r -- $? > "$rcfile"
+  ) &!
   local pid=$!
   _lil_spinner "$pid"
-  wait "$pid" 2>/dev/null
-  local rc=$?
+  local rc=0
+  [[ -f "$rcfile" ]] && rc="$(<"$rcfile")"
   LIL_ANSWER=""
   if (( _LIL_TIMEOUT )); then
     print -r -- " ${LIL_AMBER}⚠ Timed out after 120s — the vault is slow today. Retry, boss.${LIL_RESET}"
