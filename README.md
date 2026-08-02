@@ -22,6 +22,13 @@ command. A reference guru for shells, CLIs, and *nix ops; not a coding agent.
   invocation and read by pi only if the question needs them.
 - **Fully isolated** — its own `pi/` config dir (`PI_CODING_AGENT_DIR`); your
   main `~/.pi/agent` is never touched.
+- **Hard read-only** — Lil Buddy never runs anything on your machine. pi's
+  built-in `bash`/`edit`/`write` tools are disabled for this config dir (both
+  via `--exclude-tools bash,edit,write` and pinned active tools on session
+  start). The only live-inspection path is the guarded `probe` tool, which runs
+  a strict read-only allowlist and refuses everything else. When action is
+  needed, Lil Buddy hands the exact command to **you** in the `lilcmd`
+  scratchpad.
 
 ![screenshot](assets/screenshot.png)
 
@@ -90,11 +97,13 @@ lil "…"  (zsh function, current shell)
    ├─ regenerate ~/.cache/lil/fingerprint.txt (24h TTL)
    ├─ set WezTerm user-var LIL_SCRATCHPAD=1
    ├─ PI_CODING_AGENT_DIR=lilbuddy/pi pi -p -nc \
+   │      --exclude-tools bash,edit,write \
    │      --session ~/.cache/lil/session \
    │      --append-system-prompt "$(fingerprint)" "<question>"
    │        │  spinner owns the tty; stdout → temp file; 120s kill
    │        └─ pi → DeepSeek V4 Flash → SYSTEM.md persona (lilbuddy/pi/SYSTEM.md)
-   │              tools read_clipboard / read_terminal read the snapshots
+   │              read-only tools only: read_clipboard / read_terminal snapshots,
+   │              guarded `probe` for live inspection (strict allowlist)
    ├─ render the answer (strip the lilcmd block, style the markdown)
    ├─ extract LAST lilcmd block (fence or <lilcmd> tag)
    ├─ scratchpad mode if a command, else follow-up mode
@@ -110,6 +119,13 @@ Key design points:
   model sees your terminal, not pi's own output.
 - **On-demand tools** — `read_clipboard`/`read_terminal` only read the snapshots
   when the question references them.
+- **Read-only enforcement** — pi's built-in `bash`/`edit`/`write` are disabled
+  (`--exclude-tools bash,edit,write` at invocation, plus the extension pins the
+  active tool set to `read`/`probe`/`read_clipboard`/`read_terminal` on session
+  start). `probe` (in `pi/extensions/lil-context.ts`, guard in
+  `pi/probe-guard.ts`) runs a strict read-only allowlist and returns a BLOCKED
+  message for anything that writes or changes state — it never executes
+  mutations, and there is no other way for the model to run commands.
 - **Isolation** — `PI_CODING_AGENT_DIR` points at this repo's `pi/` (its own
   `settings.json`, `models.json` — key via `$DEEPSEEK_API_KEY`, never a literal —
   and `SYSTEM.md` persona). Your `~/.pi/agent` is never touched.
@@ -121,10 +137,17 @@ Key design points:
 The scratchpad reacts to plain Ctrl+R / Ctrl+Y. With WezTerm you can instead
 press **⌘Enter** to run and **⌘c** to copy while the scratchpad is open.
 
+The two key entries live in `integrations/wezterm-lil.lua` — that snippet is
+what gets installed:
+
 1. Paste the two entries from `integrations/wezterm-lil.lua` into the `keys`
-   table of your `wezterm.lua`.
-2. Inside tmux, add `set -g allow-passthrough on` to `~/.tmux.conf` and
-   `tmux source-file ~/.tmux.conf`.
+   table of your `wezterm.lua` (or run the snippet in this repo's scratchpad
+   install flow, which backs up `~/.wezterm.lua` first). They are gated on the
+   `LIL_SCRATCHPAD` user-var, so they only take over while the scratchpad is
+   open.
+2. Inside tmux, passthrough must be enabled for the user-var to cross tmux:
+   `set -g allow-passthrough on` (add to `~/.tmux.conf` and
+   `tmux source-file ~/.tmux.conf`).
 
 When the scratchpad is closed, ⌘Enter stays fullscreen and ⌘c stays copy —
 Lil Buddy only takes them over while it owns the prompt.
