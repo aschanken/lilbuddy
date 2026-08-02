@@ -161,14 +161,17 @@ _lil_extract_cmd() {
     return 1
   fi
   local -a out=()
-  local j=$((last + 1))
+  local j=$((last + 1)) closed=0
   while (( j <= ${#lines[@]} )); do
     if [[ "${lines[$j]}" =~ '^[[:space:]]*```[[:space:]]*$' ]]; then
+      closed=1
       break
     fi
     out+=("${lines[$j]}")
     j=$((j + 1))
   done
+  # End-of-input without a closing fence = malformed block; treat as none.
+  (( closed )) || return 1
   print -r -- "${(F)out}"
   return 0
 }
