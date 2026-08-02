@@ -3,7 +3,7 @@
 # Edits NO dotfiles except creating ~/.oh-my-zsh/custom/lil.zsh.
 set -e
 
-LIL_HOME="${LIL_HOME:-/Users/ais/lilbuddy}"
+LIL_HOME="${LIL_HOME:-${0:A:h}}"
 CUSTOM_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
 INSTALL_FILE="$CUSTOM_DIR/lil.zsh"
 SOURCE_LINE="source $LIL_HOME/lil.zsh"

@@ -1,7 +1,7 @@
 # lil.zsh — Lil Buddy: quick-access terminal guru (pi + deepseek-v4-flash)
 # Sourced from ~/.oh-my-zsh/custom/lil.zsh (created by install.zsh).
 
-LIL_HOME="${LIL_HOME:-/Users/ais/lilbuddy}"
+LIL_HOME="${LIL_HOME:-${${(%):-%x}:A:h}}"
 LIL_RUNTIME="${LIL_RUNTIME:-$HOME/.cache/lil}"
 LIL_TIMEOUT_SECS="${LIL_TIMEOUT_SECS:-120}"
 
@@ -33,7 +33,14 @@ _lil_fingerprint() {
     print -r -- "kernel: Darwin $(uname -r)"
     print -r -- "shell: zsh ${ZSH_VERSION}"
     print -r -- "tmux: $(tmux -V 2>/dev/null | sed 's/^tmux //')"
-    print -r -- "terminal: WezTerm"
+    local term_prog="unknown"
+    if [[ -n "$TERM_PROGRAM" ]]; then
+      term_prog="$TERM_PROGRAM"
+    elif [[ -n "$TMUX" ]]; then
+      term_prog="$(tmux show-environment -g TERM_PROGRAM 2>/dev/null | cut -d= -f2)"
+      [[ -n "$term_prog" ]] || term_prog="unknown"
+    fi
+    print -r -- "terminal: $term_prog"
     print -r -- "pkgmgr: $(brew --version 2>/dev/null | head -1)"
     print -r -- "node: $(node --version 2>/dev/null)"
     print -r -- "python3: $(python3 --version 2>/dev/null)"
