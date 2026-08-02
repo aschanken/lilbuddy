@@ -14,6 +14,27 @@ LIL_RESET=$'\e[0m'
 LIL_BOLD=$'\e[1m'           # bold
 LIL_ITALIC=$'\e[3m'         # italic
 
+LIL_HEAVY_SECS="${LIL_HEAVY_SECS:-25}"  # after this many secs: [HEAVY LOAD] + red cursor
+# Sayings-pool refresh system prompt (swapped in by the lead; placeholder for now).
+LIL_SAYINGS_PROMPT='You write short spinner sayings for Lil Buddy, a Pip-Boy-flavored terminal
+sysadmin assistant. Voice: Vault-Tec brochure cheer meets a grizzled, warm
+operator. Punchy, wry, at most one gag per line, never bleak or error-like.
+The user sees these during normal, healthy operation, never during a failure.
+
+Examples of the register you are matching:
+Decrypting with Vault-Tec certified optimism.
+Consulting the ghost of a deprecated flag.
+Almost there, pal, hang tight.
+
+Write exactly 5 new sayings in this same voice. Each saying must be 20 to 60
+characters long, plain sentence case, no numbering, no bullets, no markdown.
+Each must be distinct in wording from the example sayings above and from any
+sayings supplied in the user message. Avoid real profanity, avoid implying
+data loss or danger, avoid anything that reads like an error message.
+
+Reply with ONLY a single JSON object, no other text, in exactly this shape:
+{"sayings": ["first saying", "second saying", "third saying", "fourth saying", "fifth saying"]}'
+
 # ---------------------------------------------------------------------------
 # Environment fingerprint (regenerate when missing or older than 24h)
 # ---------------------------------------------------------------------------
@@ -92,17 +113,20 @@ _lil_ramp=(196 208 214 226 118 46 49 51 45 39 93 201)
 _LIL_JUNK=('!' '@' '#' '$' '%' '&' '*' '+' '=' '?' '/' '\' '|' '<' '>' '[' ']' '{' '}' '~' '^' '0' '1')
 
 # Print ONE decrypt frame line (no \r/\033[K — the spinner loop adds those):
-# amber "☢ " prefix + per-char message rendering + amber " ▊" cursor.
-# Args: <message> <locked-csv> <glitch-index> <cursor-on>.
+# amber "☢ " prefix + per-char message rendering + trailing cursor in $5's color.
+# Args: <message> <locked-csv> <glitch-index> <cursor-on> <cursor-color>.
 #   locked-csv: comma-separated 1-based message indices whose TRUE char renders
 #     in the static ramp gradient; every other non-space char renders random
 #     junk in dim green (41). Spaces always render as spaces.
 #   glitch-index: 0 = none, else that index renders junk this single frame
 #     (wins over locked).
 #   cursor-on: 1/0 — only the trailing ▊/blank cell differs.
+#   cursor-color: SGR 256-color number for the trailing ▊ (amber 214 normal,
+#     red 196 on distress).
 # Deterministic given its args EXCEPT the junk glyph choice (RANDOM per call).
 _lil_decrypt_frame() {
   local msg="$1" locked_csv="$2" glitch="$3" cursor="$4"
+  local curcolor="${5:-214}"          # trailing ▊ color (amber normal / red distress)
   local -A locked
   local i ch out=""
   local -a idxs=("${(@s:,:)locked_csv}")
@@ -122,11 +146,10 @@ _lil_decrypt_frame() {
       out+="${LIL_DIM}${_LIL_JUNK[$(( RANDOM % ${#_LIL_JUNK[@]} + 1 ))]}"
     fi
   done
-  out+="${LIL_AMBER}"
   if (( cursor == 1 )); then
-    out+=" ▊"
+    out+=$'\e[38;5;'"${curcolor}m ▊"
   else
-    out+="  "
+    out+="${LIL_AMBER}  "
   fi
   out+="${LIL_RESET}"
   print -rn -- "$out"
@@ -172,6 +195,47 @@ _lil_track_stage() {
   esac
 }
 
+# ---------------------------------------------------------------------------
+# Sayings pool refresh: every 5th spinner start a detached background subshell
+# calls the DeepSeek API DIRECTLY (chat/completions, no reasoning params = the
+# no-thinking mode) for fresh lines, drops the oldest N, appends the N new
+# valid ones (pool line count never changes). Never waited on; all failures
+# are silent, logged to $LIL_RUNTIME/sayings.log.
+# ---------------------------------------------------------------------------
+_lil_sayings_refresh() {
+  [[ -n "$DEEPSEEK_API_KEY" ]] || return 0
+  command -v curl >/dev/null && command -v jq >/dev/null || return 0
+  local logfile="$LIL_RUNTIME/sayings.log"
+  if [[ -f "$logfile" ]] && (( $(stat -f %z "$logfile") > 10000 )); then
+    : > "$logfile"
+  fi
+  local pool="$LIL_RUNTIME/sayings.txt" lock="$LIL_RUNTIME/sayings.lock"
+  mkdir "$lock" 2>/dev/null || return 0   # atomic lock; stale ok, next % 5 retries
+  {
+    [[ -s "$pool" ]] || return 0
+    # 12 example lines for the user message (head is oldest; sample simply)
+    local examples="$(tail -n 12 "$pool")"
+    local body resp content
+    body="$(jq -n --arg sys "$LIL_SAYINGS_PROMPT" --arg ex "$examples" '{model:"deepseek-v4-flash", thinking:{type:"disabled"}, response_format:{type:"json_object"}, max_tokens:600, temperature:1.3, messages:[{role:"system",content:$sys},{role:"user",content:("Existing sayings — do not repeat any of these:\n"+$ex+"\nReturn JSON now.")}]}')"
+    resp="$(curl -sS --fail --max-time 30 https://api.deepseek.com/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer $DEEPSEEK_API_KEY" -d "$body")" || return 0
+    content="$(print -r -- "$resp" | jq -r '.choices[0].message.content' 2>/dev/null)" || return 0
+    local -a new=("${(f)$(print -r -- "$content" | jq -r '.sayings[]?' 2>/dev/null | head -5)}")
+    local -a valid=()
+    local s
+    for s in "${new[@]}"; do
+      s="${s//[$'\t\r\n']/ }"
+      (( ${#s} >= 8 && ${#s} <= 70 )) || continue
+      grep -Fxq -- "$s" "$pool" && continue
+      valid+=("$s")
+    done
+    (( ${#valid[@]} > 0 )) || return 0
+    local tmp="$pool.tmp.$$"
+    tail -n +$(( ${#valid[@]} + 1 )) "$pool" > "$tmp" || return 0
+    print -rl -- "${valid[@]}" >> "$tmp"
+    mv "$tmp" "$pool"
+  } always { rmdir "$lock" 2>/dev/null }
+}
+
 _lil_spinner() {
   local pid="$1"
   local start=$SECONDS
@@ -180,10 +244,37 @@ _lil_spinner() {
   local -a perm=() locked=() newlocked=() news=() locked_idx=()
   local glitch=0 cursor_on=1 locked_csv="" gpid
   local nlen=0 olen=0 i=0 j=0 tmp=0 n=0 k=0
+  local poolfile="$LIL_RUNTIME/sayings.txt" usefile="$LIL_RUNTIME/sayings.uses"
+  local -a pool=()
+  local pick="" uses=0 sayline=0 distress=0 curcolor=214 sayw=0
   # NOTE: every local is declared up here, before the loop. In an interactive
   # shell, `local` inside a while-loop body makes zsh echo `var=value` lines
   # into stdout after each iteration — the spinner must never leak that noise.
   _LIL_TIMEOUT=0
+  # Sayings: seed the live pool from the repo seed if missing/empty, show one
+  # random line above the animation, bump the use counter and refresh the pool
+  # (every 5th use) in a detached background subshell — never waited on.
+  if [[ ! -s "$poolfile" ]] && [[ -s "$LIL_HOME/sayings.txt" ]]; then
+    cp "$LIL_HOME/sayings.txt" "$poolfile"
+  fi
+  if [[ -s "$poolfile" ]]; then
+    pool=("${(f)$(<"$poolfile")}")
+    if (( ${#pool[@]} > 0 )); then
+      pick="${pool[$(( RANDOM % ${#pool[@]} + 1 ))]}"
+      # COLUMNS<=0 means "no known width" (zsh non-tty value) — fall back to 80.
+      sayw=$(( (COLUMNS > 0 ? COLUMNS : 80) - 6 ))
+      (( sayw < 1 )) && sayw=1
+      print -r -- $'\033[38;5;244m\033[3m  ░ '"${pick[1,sayw]}"$'\033[0m'
+      sayline=1
+    fi
+  fi
+  uses=0
+  [[ -f "$usefile" ]] && uses="$(<"$usefile")"
+  uses=$(( uses + 1 ))
+  print -r -- "$uses" > "$usefile"
+  if (( uses % 5 == 0 )); then
+    ( _lil_sayings_refresh ) >> "$LIL_RUNTIME/sayings.log" 2>&1 &!
+  fi
   # Hide the hardware cursor for the duration — the frame renders its own ▊.
   # The always-block restores it even if ^C aborts the loop mid-animation;
   # without it the shell would be left cursorless.
@@ -237,7 +328,7 @@ _lil_spinner() {
       prevmsg="$msg"
     fi
     msg_full="$msg"
-    if (( SECONDS - start > 25 )); then
+    if (( SECONDS - start > LIL_HEAVY_SECS )); then
       msg_full+=" [HEAVY LOAD]"
       if (( ! heavy )); then
         heavy=1
@@ -282,14 +373,27 @@ _lil_spinner() {
       (( locked[i] )) && locked_csv+="${i},"
     done
     locked_csv="${locked_csv%,}"
+    # distress, recomputed each frame: heavy-load timeout exceeded OR a last.err
+    # with content → red cursor (196); otherwise amber (214).
+    distress=0
+    if (( SECONDS - start > LIL_HEAVY_SECS )) || [[ -s "$LIL_RUNTIME/last.err" ]]; then
+      distress=1
+    fi
+    (( distress )) && curcolor=196 || curcolor=214
     printf '\r\033[K'
-    _lil_decrypt_frame "$msg_full" "$locked_csv" "$glitch" "$cursor_on"
+    _lil_decrypt_frame "$msg_full" "$locked_csv" "$glitch" "$cursor_on" "$curcolor"
     sleep 0.07
     framecount=$(( framecount + 1 ))
   done
-  printf '\r\033[K'
   } always {
-    printf '\033[?25h'
+    if (( sayline )); then
+      # clear the animation line, up one, clear the saying line, restore cursor
+      printf '\r\033[K\033[1A\r\033[K\033[?25h'
+    else
+      # no saying line was printed — single-line cleanup so \033[1A never
+      # climbs into the banner above
+      printf '\r\033[K\033[?25h'
+    fi
   }
 }
 
