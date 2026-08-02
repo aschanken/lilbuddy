@@ -3,6 +3,7 @@
 
 LIL_HOME="${LIL_HOME:-/Users/ais/lilbuddy}"
 LIL_RUNTIME="${LIL_RUNTIME:-$HOME/.cache/lil}"
+LIL_TIMEOUT_SECS="${LIL_TIMEOUT_SECS:-120}"
 
 # Pip-Boy palette (256-color raw escapes)
 LIL_GREEN=$'\e[38;5;84m'    # bright Pip-Boy green
@@ -71,10 +72,12 @@ _lil_spinner() {
   local start=$SECONDS
   local -a spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
   local -a flavors=("consulting the vault archives…" "asking the overseer…" "thumbing the manual…")
-  local i=0 si fi
+  local i=0 si fi gpid
   _LIL_TIMEOUT=0
   while kill -0 "$pid" 2>/dev/null; do
-    if (( SECONDS - start > 120 )); then
+    if (( SECONDS - start > LIL_TIMEOUT_SECS )); then
+      [[ -f "$LIL_RUNTIME/last.pid" ]] && gpid="$(<"$LIL_RUNTIME/last.pid")"
+      [[ -n "$gpid" ]] && kill "$gpid" 2>/dev/null
       kill "$pid" 2>/dev/null
       _LIL_TIMEOUT=1
       break
@@ -102,15 +105,20 @@ _lil_invoke() {
   _lil_fingerprint
   : > "$outfile"
   : > "$rcfile"
+  : > "$LIL_RUNTIME/last.pid"
   # `&!` disowns the subshell so the interactive shell prints no "[N] pid"
   # job-control line; the exit code is carried back via $rcfile instead of
-  # wait, which cannot wait on a disowned child.
+  # wait, which cannot wait on a disowned child. The real pi pid is recorded
+  # in last.pid so the spinner can reap pi itself on timeout (pi is a
+  # grandchild, invisible to the shell's job table).
   (
     cd "$LIL_RUNTIME" || exit 1
     PI_CODING_AGENT_DIR="$LIL_HOME/pi" pi -p -nc \
       --session "$LIL_RUNTIME/session" \
       --append-system-prompt "$(cat "$LIL_RUNTIME/fingerprint.txt")" \
-      "$prompt" > "$outfile" 2> "$errfile"
+      "$prompt" > "$outfile" 2> "$errfile" &
+    print -r -- $! > "$LIL_RUNTIME/last.pid"
+    wait
     print -r -- $? > "$rcfile"
   ) &!
   local pid=$!
@@ -119,7 +127,7 @@ _lil_invoke() {
   [[ -f "$rcfile" ]] && rc="$(<"$rcfile")"
   LIL_ANSWER=""
   if (( _LIL_TIMEOUT )); then
-    print -r -- " ${LIL_AMBER}⚠ Timed out after 120s — the vault is slow today. Retry, boss.${LIL_RESET}"
+    print -r -- " ${LIL_AMBER}⚠ Timed out after ${LIL_TIMEOUT_SECS}s — the vault is slow today. Retry, boss.${LIL_RESET}"
     return 2
   fi
   if (( rc != 0 )); then
@@ -313,6 +321,7 @@ _lil_print_answer() {
 # ---------------------------------------------------------------------------
 lil() {
   mkdir -p "$LIL_RUNTIME"
+  command rm -f -- "$LIL_RUNTIME/session"
   _lil_uservar 1
   local rc=0
   {
