@@ -58,6 +58,13 @@ Key design facts:
   `probe` tool (pi/probe-guard.ts) allowlists read-only commands; persona
   promises are flavor, the guard is the enforcement. Never re-enable
   bash/edit/write.
+- **Spinner state extras**: random lines from a rotating sayings pool
+  (`~/.cache/lil/sayings.txt`, seeded from the repo's `sayings.txt`) cycle
+  through the decrypt animation — after a stage message fully locks and dwells
+  2s, the animation swaps to a new saying; every 5th use a detached background
+  subshell refreshes the pool via the DeepSeek chat API (never blocks lil);
+  the pseudo-cursor turns red (196) under heavy load or a non-empty `last.err`,
+  amber (214) otherwise.
 - **Model quirk**: deepseek-v4-flash's thinkingLevelMap offers only high/max —
   don't set a lower defaultThinkingLevel, pi will reject it.
 - **Cmd-key chords**: Cmd+Enter/Cmd+C work only via the WezTerm snippet
@@ -80,6 +87,7 @@ Key design facts:
 | `pi/extensions/lil-context.ts` | `read_clipboard` / `read_terminal` tools |
 | `integrations/wezterm-lil.lua` | Cmd-chord enhancement snippet (user pastes into wezterm.lua) |
 | `install.zsh` | idempotent; writes `~/.oh-my-zsh/custom/lil.zsh` (one source line) only |
+| `sayings.txt` | seed sayings pool (65 placeholder lines) — copied to `~/.cache/lil/sayings.txt` on first use; lead swaps real content later |
 
 pi runtime droppings inside `pi/` (sessions/, caches, auth.json) are gitignored —
 never commit them.
