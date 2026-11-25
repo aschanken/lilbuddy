@@ -1,168 +1,221 @@
 # Lil Buddy 🗄️
 
-A Pip-Boy-flavored terminal sysadmin guru: zsh + pi + DeepSeek.
+A Pip-Boy-flavored terminal sysadmin guru with a face: pi + DeepSeek, on macOS
+and Linux, in zsh, bash or fish.
 
-Type `lil how do I …` in zsh and get a punchy, styled answer from DeepSeek V4
-Flash — with an interactive command scratchpad when the answer is a runnable
-command. A reference guru for shells, CLIs, and *nix ops; not a coding agent.
+Type `lil how do I …` and a little CRT-headed robot switches on, thinks out
+loud, pokes at your machine through a strictly read-only probe, and decrypts a
+punchy answer onto your screen — with an interactive command scratchpad when
+the answer is something you can run. A reference guru for shells, CLIs, and
+*nix ops; not a coding agent.
+
+![Lil Buddy answering a question](assets/demo.gif)
+
+Don't have an API key handy? `lil --demo` plays the whole thing back offline.
 
 ## Features
 
-- **One-shot answers** — `lil "…"` runs a quick [pi] session and prints a terse,
-  ANSI-styled answer (inline code, bold/italic, headers, bullets, code blocks).
-- **Command scratchpad** — when the answer ends in a `lilcmd` block, the command
-  is offered in a framed box you can **run** (in this shell, history included),
-  **copy**, or **dismiss** — then keep asking follow-ups in the same session.
-- **Tag-tolerant extraction** — the wrapper accepts both fenced ```lilcmd blocks
-  and `<lilcmd>` XML tags (belt and suspenders against model drift).
-- **Terminal-aware** — a 24h fingerprint of your env (OS, shell, tmux, package
-  manager, tool versions) is appended to every prompt, so answers match this
-  machine's versions.
+- **He shows his work** — while pi runs, a live panel shows what is actually
+  happening: the model's reasoning scrolling past as it is generated, every
+  `probe` command he runs on your machine (and a red `✗ BLOCKED` when the
+  read-only guard slaps one down), a token pulse, the clock. None of it is
+  canned animation; every row is driven by pi's event stream.
+- **He has moods** — eyes up while thinking, a visor sweep while probing, a
+  wink when he's done, a squint and a red antenna under heavy load. Press a
+  key while he's working and he'll tell you what he thinks of that.
+- **Answers stream in** — each line decrypts onto the screen as the model
+  writes it, then the panel switches off like a CRT. What's left in your
+  scrollback is the same clean answer screen as always.
+- **Command scratchpad** — when the answer ends in a `lilcmd` block, the
+  command is offered in a framed box you can **run** (in *this* shell: your
+  aliases, your cwd, your history), **copy**, **edit** on your prompt, or
+  **dismiss** — or just keep typing to ask a follow-up in the same session.
+- **This one bites** — destructive commands (`rm -rf`, `dd`, `mkfs`, forced
+  pushes…) turn the box red and need a second tap of RUN.
+- **No quoting gymnastics** — bare `lil` opens an input line; in zsh,
+  `lil what does *.log match?` just works.
+- **Terminal-aware** — a 24h fingerprint of your env (OS, shell, userland,
+  init system, package manager, clipboard tool, tool versions) is appended to
+  every prompt, so answers match this machine.
 - **Context on demand** — clipboard and terminal scrollback are snapshotted at
   invocation and read by pi only if the question needs them.
 - **Fully isolated** — its own `pi/` config dir (`PI_CODING_AGENT_DIR`); your
   main `~/.pi/agent` is never touched.
-- **Hard read-only** — Lil Buddy never runs anything on your machine. pi's
-  built-in `bash`/`edit`/`write` tools are disabled for this config dir (both
-  via `--exclude-tools bash,edit,write` and pinned active tools on session
-  start). The only live-inspection path is the guarded `probe` tool, which runs
-  a strict read-only allowlist and refuses everything else. When action is
-  needed, Lil Buddy hands the exact command to **you** in the `lilcmd`
-  scratchpad.
-
-![screenshot](assets/screenshot.png)
-
-> Screenshot slot — drop a terminal capture of `lil` in action into
-> `assets/screenshot.png` (the repo ships an empty `assets/` with `.gitkeep`).
-
-## Requirements
-
-- **macOS** (clipboard via `pbcopy`/`pbpaste`; `sw_vers` in the fingerprint)
-- **zsh**
-- **[pi coding agent] ≥ 0.82** ([earendil-works/pi](https://github.com/earendil-works/pi))
-- **`DEEPSEEK_API_KEY`** environment variable (see your DeepSeek console)
-- **A Nerd Font** for the glyphs (⌘, ⏎, ✏, ☢, ▸, ┃)
-- **oh-my-zsh** optional — non-omz users add `source /path/to/lilbuddy/lil.zsh`
-  to `.zshrc` manually
+- **Hard read-only** — Lil Buddy never changes anything on your machine. pi's
+  built-in `bash`/`edit`/`write` tools are disabled twice over, and the only
+  live-inspection path is the guarded `probe` tool: a strict read-only
+  allowlist, run under plain `sh`, that refuses everything else. When action
+  is needed, he hands the exact command to **you**.
 
 ## Install
 
 ```sh
-zsh /path/to/lilbuddy/install.zsh
+curl -fsSL https://raw.githubusercontent.com/aschanken/lilbuddy/main/install.sh | sh
 ```
 
-This writes `source /path/to/lilbuddy/lil.zsh` to
-`~/.oh-my-zsh/custom/lil.zsh` (auto-sourced on the next zsh start) and creates
-`~/.cache/lil/`. It edits **no** other dotfiles. Open a new shell and you're
-done:
+or, from a clone:
 
 ```sh
-lil "how do I find what's listening on port 8080"
+git clone https://github.com/aschanken/lilbuddy && sh lilbuddy/install.sh
 ```
+
+One POSIX-sh installer for every platform and shell. It:
+
+1. detects your OS and package manager,
+2. checks for Node and [pi], installs pi for you (no sudo — it falls back to
+   `~/.local` when the global npm prefix isn't writable), and offers the exact
+   command for anything that needs your password,
+3. wires up every shell you use — your login shell, the shell you ran it
+   from, and any other supported shell you already have a config for,
+4. drops a `lil` launcher in `~/.local/bin` for everything else.
+
+| Shell | What it touches |
+|-------|-----------------|
+| zsh | `~/.oh-my-zsh/custom/lil.zsh` if oh-my-zsh is present, otherwise one marked block in `${ZDOTDIR:-~}/.zshrc` |
+| bash | one marked block in `~/.bashrc` (`~/.bash_profile` on macOS) |
+| fish | `~/.config/fish/conf.d/lil.fish` |
+| anything else | the `~/.local/bin/lil` launcher (RUN then uses a child shell) |
+
+It is idempotent — run it again after a `git pull` or after switching shells.
+`--shell zsh,fish`, `--yes`, `--dry-run`, `--no-deps` and `--uninstall` do what
+they say; `sh install.sh --help` lists them.
+
+Then put your key where your shell can see it and open a new shell:
+
+```sh
+export DEEPSEEK_API_KEY=sk-…        # fish: set -Ux DEEPSEEK_API_KEY sk-…
+lil --doctor                        # checks node, pi, key, clipboard, fonts
+lil --demo                          # watch him work
+```
+
+Upgrading from the zsh-only version? Just pull — the old
+`source …/lil.zsh` line still works — or re-run the installer.
+
+## Requirements
+
+- **macOS or Linux** (WSL and Termux are detected too)
+- **Node ≥ 22.19** — that is what current [pi] needs; Lil Buddy itself has no
+  npm dependencies
+- **[pi coding agent]** (`npm i -g @earendil-works/pi-coding-agent`; verified
+  with 1.6.1)
+- **`DEEPSEEK_API_KEY`** in your environment
+- Optional: a **Nerd Font** for the robot glyph in the header (auto-detected;
+  a plain glyph is used otherwise), and on Linux a clipboard tool
+  (`wl-clipboard`, `xclip` or `xsel`) — without one, copy uses OSC 52, which
+  is also what makes copy work over SSH.
 
 ## Usage
 
 ```sh
-lil "<question>"          # ask; answer may come with a command scratchpad
+lil how do I find what is listening on port 8080
+lil                       # ask on an input line (no shell quoting to fight)
+lil --demo [port|concept|danger|blocked|error]
+lil --doctor
 ```
 
-A typical session:
-
-```
-╭─ 󰚩  LIL BUDDY ─ VAULT-TEC CERTIFIED ─╮
-  `lsof -nP -iTCP:8080 -sTCP:LISTEN` shows open sockets on that port…
-  ╔═ ☢  S C R A T C H P A D ═══════════════════════════╗
-  ║ ❯ lsof -nP -iTCP:8080 -sTCP:LISTEN                ║
-  ╚═══════════════════════════════ AWAITING ORDERS ═══╝
-    [⏎ dismiss]  [^R ⌘⏎ RUN]  [^Y ⌘C copy]  [✏ type to reply]
-```
-
-While the scratchpad is open (stdin is a terminal):
+While he works:
 
 | Key | Action |
 |-----|--------|
-| ⏎ / Esc / `q` `Q` | dismiss, back to zsh |
-| ⌘Enter / Ctrl+R / `r` `R` | run the command in this shell (history included) |
-| ⌘c / Ctrl+Y / `c` `C` `y` `Y` | copy the command to the clipboard |
+| Esc / Ctrl+C | stand him down |
+| anything else | poke him |
+
+While the scratchpad is open:
+
+| Key | Action |
+|-----|--------|
+| ⏎ / Esc / `q` | dismiss, back to your shell |
+| Ctrl+R / `r` (⌘⏎ in WezTerm) | run the command in this shell (history included) |
+| Ctrl+Y / `c` / `y` (⌘C in WezTerm) | copy the command |
+| Ctrl+E | put the command on your prompt to edit (zsh, fish; edited in place in bash 4+) |
 | any other char | start a follow-up question in the same conversation |
 
-Follow-up answers can hand over a new scratchpad command.
+Follow-up answers can hand over a new scratchpad command; the old box is
+stamped `SHELVED` so it is always clear which command is live.
+
+### Tuning
+
+| Variable | Effect |
+|----------|--------|
+| `LIL_MOTION=full\|compact\|off` | the full panel, the original one-line spinner, or no motion at all (compact is automatic under 64 columns or 14 rows) |
+| `LIL_RAMP=classic` | bring back the original rainbow ramp on the decrypt line |
+| `LIL_PARA_GAP=1` | a blank line between paragraphs in answers |
+| `LIL_NERD_FONT=0\|1` | override Nerd Font detection |
+| `LIL_TIMEOUT_SECS` / `LIL_HEAVY_SECS` | kill a run after 120s / show `[HEAVY LOAD]` after 25s |
+| `NO_COLOR=1` | no colour; piped output is always plain |
 
 ## How it works
 
 ```
-lil "…"  (zsh function, current shell)
+lil "…"   (shell function: shell/lil.{zsh,bash,fish} — or bin/lil)
+   │  LIL_HANDOFF=<tmpfile>  node src/cli.mjs "…"
    │
-   ├─ snapshot clipboard (pbpaste) + terminal scrollback (tmux capture-pane)
+   ├─ snapshot clipboard + terminal scrollback (tmux / WezTerm / kitty / zellij)
    ├─ regenerate ~/.cache/lil/fingerprint.txt (24h TTL)
    ├─ set WezTerm user-var LIL_SCRATCHPAD=1
    ├─ PI_CODING_AGENT_DIR=lilbuddy/pi pi --mode json -nc \
    │      --exclude-tools bash,edit,write \
    │      --session ~/.cache/lil/session \
-   │      --append-system-prompt "$(fingerprint)" "<question>"
-   │        │  RobCo decryption spinner (stage-driven); JSONL → temp file; 120s kill
+   │      --append-system-prompt "$(fingerprint)" -- "<question>"
+   │        │  JSONL events → live panel (stage, thinking, tools, tokens);
+   │        │  text deltas → rendered line by line above the panel; 120s kill
    │        └─ pi → DeepSeek V4 Flash → SYSTEM.md persona (lilbuddy/pi/SYSTEM.md)
    │              read-only tools only: read_clipboard / read_terminal snapshots,
-   │              guarded `probe` for live inspection (strict allowlist)
-   ├─ render the answer (strip the lilcmd block, style the markdown)
-   ├─ extract LAST lilcmd block (fence or <lilcmd> tag)
-   ├─ scratchpad mode if a command, else follow-up mode
-   │     ^R/^Y or typing → run / copy / re-ask pi (same session)
+   │              guarded `probe` for live inspection (strict allowlist, /bin/sh)
+   ├─ hold back the LAST lilcmd block (fence or <lilcmd> tag) for the scratchpad
+   ├─ scratchpad: run / copy / edit / dismiss / follow-up (same pi session)
+   │     run & edit → written to $LIL_HANDOFF; the shell function evals it
+   │     in YOUR shell after the engine exits
    └─ always → clear user-var LIL_SCRATCHPAD=0
 ```
 
 Key design points:
 
-- **Fingerprint** — env/versions cached 24h; appended to the persona so answers
-  target *this* machine.
-- **Snapshots** — clipboard and terminal are captured *before* pi starts, so the
-  model sees your terminal, not pi's own output.
-- **On-demand tools** — `read_clipboard`/`read_terminal` only read the snapshots
-  when the question references them.
-- **Read-only enforcement** — pi's built-in `bash`/`edit`/`write` are disabled
-  (`--exclude-tools bash,edit,write` at invocation, plus the extension pins the
-  active tool set to `read`/`probe`/`read_clipboard`/`read_terminal` on session
-  start). `probe` (in `pi/extensions/lil-context.ts`, guard in
-  `pi/probe-guard.ts`) runs a strict read-only allowlist and returns a BLOCKED
-  message for anything that writes or changes state — it never executes
-  mutations, and there is no other way for the model to run commands.
-- **Isolation** — `PI_CODING_AGENT_DIR` points at this repo's `pi/` (its own
-  `settings.json`, `models.json` — key via `$DEEPSEEK_API_KEY`, never a literal —
-  and `SYSTEM.md` persona). Your `~/.pi/agent` is never touched.
+- **One engine, thin shells** — everything lives in dependency-free Node
+  (`src/`), which is guaranteed to be there because pi needs it. The only
+  shell-specific code is a ~40-line function per shell whose one job is to
+  run the scratchpad command in the calling shell.
+- **The answer screen is a contract** — `tests/golden/` holds renders produced
+  by the original zsh implementation; the Node renderer must match them byte
+  for byte, whole or streamed.
+- **Snapshots** — clipboard and terminal are captured *before* pi starts, so
+  the model sees your terminal, not Lil Buddy's own output.
+- **Read-only enforcement** — `--exclude-tools bash,edit,write` at invocation,
+  plus the extension pins the active tool set to
+  `read`/`probe`/`read_clipboard`/`read_terminal` on session start. `probe`
+  (guard in `pi/probe-guard.ts`) returns a BLOCKED message for anything that
+  writes, changes state or could run arbitrary code.
 - **Session-per-invocation** — each `lil` run starts a fresh pi session; the
   scratchpad follow-ups keep that same session alive.
 
-## WezTerm / tmux enhancement (optional but nice)
+## WezTerm / tmux enhancement (optional)
 
-The scratchpad reacts to plain Ctrl+R / Ctrl+Y. With WezTerm you can instead
-press **⌘Enter** to run and **⌘c** to copy while the scratchpad is open.
+The scratchpad reacts to plain Ctrl+R / Ctrl+Y everywhere. With WezTerm on
+macOS you can also press **⌘Enter** to run and **⌘C** to copy while the
+scratchpad is open: paste the two entries from `integrations/wezterm-lil.lua`
+into the `keys` table of your `wezterm.lua`. They are gated on the
+`LIL_SCRATCHPAD` user-var, so they only take over while the scratchpad is
+open. Inside tmux the user-var needs `set -g allow-passthrough on`.
+(`lil --doctor` checks that.) The file has a note for Linux key choices.
 
-The two key entries live in `integrations/wezterm-lil.lua` — that snippet is
-what gets installed:
+## Tests
 
-1. Paste the two entries from `integrations/wezterm-lil.lua` into the `keys`
-   table of your `wezterm.lua` (or run the snippet in this repo's scratchpad
-   install flow, which backs up `~/.wezterm.lua` first). They are gated on the
-   `LIL_SCRATCHPAD` user-var, so they only take over while the scratchpad is
-   open.
-2. Inside tmux, passthrough must be enabled for the user-var to cross tmux:
-   `set -g allow-passthrough on` (add to `~/.tmux.conf` and
-   `tmux source-file ~/.tmux.conf`).
-
-When the scratchpad is closed, ⌘Enter stays fullscreen and ⌘c stays copy —
-Lil Buddy only takes them over while it owns the prompt.
+```sh
+npm test        # node --test: renderer parity, pi contract, shells, installer, guard
+```
 
 ## Uninstall
 
 ```sh
-rm ~/.oh-my-zsh/custom/lil.zsh
+sh install.sh --uninstall
 ```
 
-(Optionally remove `~/.cache/lil/` and `integrations/wezterm-lil.lua` entries
-and the `allow-passthrough` line.)
+removes the shell integrations and the launcher. The checkout and
+`~/.cache/lil/` are left for you to delete.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
+[pi]: https://github.com/earendil-works/pi
 [pi coding agent]: https://github.com/earendil-works/pi

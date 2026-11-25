@@ -1,13 +1,14 @@
 // Lil Buddy context snapshot tools + read-only `probe`.
-// Snapshot files (clip.txt, term.txt) are written by the `lil` zsh wrapper
-// BEFORE pi launches. The extension only reads them via LIL_RUNTIME; there is
-// no live capture inside pi.
+// Snapshot files (clip.txt, term.txt) are written by the `lil` engine
+// (src/platform.mjs) BEFORE pi launches. The extension only reads them via
+// LIL_RUNTIME, which the engine exports to pi; there is no live capture
+// inside pi.
 //
 // Read-only enforcement (v3): on session_start we pin the ACTIVE tool set to
 // the read-only surface {read, probe, read_clipboard, read_terminal}. This
 // removes pi's built-in bash/edit/write/grep/find/ls from what the model can
 // call, regardless of how pi is invoked with this config dir. Belt-and-
-// suspenders: lil.zsh also passes `--exclude-tools bash,edit,write`.
+// suspenders: src/pi.mjs also passes `--exclude-tools bash,edit,write`.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";

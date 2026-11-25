@@ -1,0 +1,16 @@
+#!/bin/sh
+# lil — launcher for shells without a Lil Buddy integration (and for scripts).
+# With the zsh / bash / fish integration loaded, the `lil` shell function
+# takes precedence and can run the scratchpad command in your current shell.
+self="$0"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case "$link" in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
+done
+LIL_HOME="$(cd "$(dirname "$self")/.." && pwd -P)"
+export LIL_HOME
+if ! command -v node >/dev/null 2>&1; then
+  echo "lil: node is not on PATH — run $LIL_HOME/install.sh" >&2
+  exit 127
+fi
+exec node "$LIL_HOME/src/cli.mjs" "$@"
