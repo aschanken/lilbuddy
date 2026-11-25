@@ -1,0 +1,14 @@
+{
+  "name": "lilbuddy",
+  "version": "2.0.0",
+  "description": "A Pip-Boy-flavored terminal sysadmin guru: pi + DeepSeek, with a face.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "bin": { "lil": "bin/lil" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "demo": "node src/cli.mjs --demo"
+  }
+}

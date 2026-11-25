@@ -1,0 +1,12 @@
+  Use a drop-in unit instead of editing the vendor file:
+
+[38;5;244m  ┃ [0m[38;5;84m[Service][0m
+[38;5;244m  ┃ [0m[38;5;84mEnvironment=PORT=8080[0m
+[38;5;244m  ┃ [0m[38;5;84m    ExecStart=/usr/local/bin/app --port ${PORT} --log-level debug --config /etc/app/config.toml [0m
+[38;5;244m  ┃ [0m[38;5;84m--pid-file /run/app/app.pid[0m
+
+  Then reload. Remember: a clean [38;5;214m$PATH[0m is a happy [38;5;214m$PATH[0m!
+
+[38;5;244m  ┃ [0m[38;5;84msystemctl cat app.service[0m
+
+  ⚠ This one bites — read twice.

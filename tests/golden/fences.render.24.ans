@@ -1,0 +1,25 @@
+  Use a drop-in unit
+  instead of editing
+  the vendor file:
+
+[38;5;244m  ┃ [0m[38;5;84m[Service][0m
+[38;5;244m  ┃ [0m[38;5;84mEnvironment=PORT=808[0m
+[38;5;244m  ┃ [0m[38;5;84m0[0m
+[38;5;244m  ┃ [0m[38;5;84m    ExecStart=/usr/l[0m
+[38;5;244m  ┃ [0m[38;5;84mocal/bin/app --port [0m
+[38;5;244m  ┃ [0m[38;5;84m${PORT} --log-level [0m
+[38;5;244m  ┃ [0m[38;5;84mdebug --config /etc/[0m
+[38;5;244m  ┃ [0m[38;5;84mapp/config.toml --pi[0m
+[38;5;244m  ┃ [0m[38;5;84md-file /run/app/app.[0m
+[38;5;244m  ┃ [0m[38;5;84mpid[0m
+
+  Then reload.
+  Remember: a clean
+  [38;5;214m$PATH[0m is a happy
+  [38;5;214m$PATH[0m!
+
+[38;5;244m  ┃ [0m[38;5;84msystemctl cat app.se[0m
+[38;5;244m  ┃ [0m[38;5;84mrvice[0m
+
+  ⚠ This one bites —
+  read twice.

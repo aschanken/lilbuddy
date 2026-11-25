@@ -1,0 +1,52 @@
+[1m[38;5;84m  ◆ FINDING WHAT OWNS A PORT[0m[38;5;214m[0m
+
+  Short answer: [1m[38;5;84mss[0m
+  on Linux, [38;5;214mlsof[0m on
+  macOS. Both show the
+  [3m[38;5;41mlistening[0m socket
+  and the PID that
+  holds it.
+[1m[38;5;84m  ◆ THE OPTIONS[0m[38;5;214m───────[0m
+
+[38;5;84m ▸ [0m[38;5;214mss -ltnp[0m lists TCP
+   listeners with
+   process names; needs
+   root to see other
+   users' processes.
+[38;5;84m ▸ [0m[38;5;214mlsof -nP -iTCP:8080 -sTCP:LISTEN[0m
+   works on both
+   platforms and is the
+   most portable choice
+   you have.
+[38;5;84m ▸ [0m[38;5;214mnetstat -tulpn[0m is
+   the legacy tool,
+   deprecated in favour
+   of [1m[38;5;84miproute2[0m on
+   every modern distro.
+[1m[38;5;84m  ◆ STEPS[0m[38;5;214m─────────────[0m
+
+[38;5;84m1.[0m Run the command
+   below.
+[38;5;84m2.[0m Read the
+   [1m[38;5;84mPID/Program name[0m
+   column — that is
+   your culprit, and
+   [38;5;214mps -fp <pid>[0m tells
+   you who started it.
+[38;5;84m10.[0m Kill it politely
+    with [38;5;214mkill <pid>[0m
+    before reaching for
+    [38;5;214m-9[0m.
+  #### Not a header
+  (four hashes)
+  Globs like *.txt and
+  a lone * stay
+  literal, as does an
+  unmatched ** marker
+  or a stray
+  ` backtick.
+  A line with
+  [38;5;214mcode that has spaces inside it and should never be split across a wrap point[0m
+  right here.
+  Averyveryverylongwordthatcannotbewrappedatanywordboundarybecausethereisnospaceinitanywhereatallforareallylongtime
+  ok.

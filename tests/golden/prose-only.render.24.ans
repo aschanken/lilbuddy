@@ -1,0 +1,15 @@
+  A [1m[38;5;84mhard link[0m is a
+  second directory
+  entry for the same
+  inode; a [3m[38;5;41msymlink[0m
+  is a tiny file that
+  stores a path.
+
+  Delete the original
+  and the hard link
+  still works — the
+  symlink dangles.
+  Hard links can't
+  cross filesystems or
+  (normally) point at
+  directories.

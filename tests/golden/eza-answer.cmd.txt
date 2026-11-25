@@ -1,0 +1,1 @@
+brew install eza && echo 'alias ls="eza -la --group-directories-first"' >> ~/.zshrc && source ~/.zshrc
