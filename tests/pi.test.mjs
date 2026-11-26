@@ -79,11 +79,15 @@ test("a blocked probe is flagged; usage and retries pass through", () => {
   assert.equal(t.failure, "401 bad key");
 });
 
-test("argv contract: json mode, no context files, write tools excluded, prompt after --", () => {
-  assert.deepEqual(piArgs({ runtime: "/rt", fingerprint: "FP", prompt: "-l in ls?" }), [
-    "--mode", "json", "-nc", "--exclude-tools", "bash,edit,write",
-    "--session", "/rt/session", "--append-system-prompt", "FP", "--", "-l in ls?",
-  ]);
+test("argv contract: json mode, no context files, write tools excluded, bare prompt", () => {
+  const base = ["--mode", "json", "-nc", "--exclude-tools", "bash,edit,write",
+    "--session", "/rt/session", "--append-system-prompt", "FP"];
+  assert.deepEqual(piArgs({ runtime: "/rt", fingerprint: "FP", prompt: "tell me a joke." }), [...base, "tell me a joke."]);
+  // No `--` separator: pi 0.82 rejects it ("Unknown option: --"). A leading
+  // dash is defused with a space, which old and new pi both take as a message.
+  const dashed = piArgs({ runtime: "/rt", fingerprint: "FP", prompt: "-l in ls?" });
+  assert.deepEqual(dashed, [...base, " -l in ls?"]);
+  assert.ok(!dashed.includes("--"));
 });
 
 test("runPi: spawns pi isolated, stdin closed, and streams the answer", async () => {

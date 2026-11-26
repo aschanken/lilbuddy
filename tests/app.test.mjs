@@ -80,5 +80,7 @@ test("--demo needs neither pi nor a key; --version and --help work", () => {
 test("a question that starts with a dash is still a question", () => {
   const out = path.join(os.tmpdir(), `lil-args-${process.pid}.json`);
   lil(["-l", "flag", "of", "ls?"], { FAKE_PI_ARGS_OUT: out });
-  assert.equal(JSON.parse(fs.readFileSync(out, "utf8")).argv.at(-1), "-l flag of ls?");
+  const argv = JSON.parse(fs.readFileSync(out, "utf8")).argv;
+  assert.equal(argv.at(-1), " -l flag of ls?");
+  assert.ok(!argv.includes("--"));
 });

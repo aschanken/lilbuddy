@@ -64,8 +64,8 @@ Key design facts:
 - **Invocation is `--mode json`**: pi's stdin must be closed (`stdio:
   ["ignore", …]`) — json mode blocks forever on an open non-tty stdin. Split
   the JSONL on LF only (pi's docs: `readline` is wrong for this stream). The
-  prompt goes after `--` so a question starting with `-` is not parsed as a
-  flag. Provider usage often arrives only when a response completes; the
+  prompt is a bare positional — never `-- prompt`: pi 0.82 rejects the
+  separator. A question starting with `-` gets a leading space instead. Provider usage often arrives only when a response completes; the
   token counter estimates until then.
 - **Read-only enforcement is tool-layer, twice**: `--exclude-tools
   bash,edit,write` on the CLI AND `pi.setActiveTools([read, probe,
@@ -112,9 +112,11 @@ never commit them.
 
 ## Environment ground truth
 
-- pi 1.6.1 (`@earendil-works/pi-coding-agent`, needs Node ≥ 22.19). Flags this
-  repo relies on: `--mode json`, `-nc`, `--exclude-tools`, `--session`,
-  `--append-system-prompt`, `--`, and `PI_CODING_AGENT_DIR`. Verified
+- pi 0.82.1 through 1.6.1 (`@earendil-works/pi-coding-agent`; 1.6.1 needs
+  Node ≥ 22.19). Flags this repo relies on: `--mode json`, `-nc`,
+  `--exclude-tools`, `--session`, `--append-system-prompt`, and
+  `PI_CODING_AGENT_DIR` — all present in both. Check any new flag against the
+  oldest version before using it. Verified
   2026-11-25 on Linux against a local OpenAI-compatible mock: extension loads,
   tool surface is exactly `read, read_clipboard, read_terminal, probe`.
 - The engine itself only needs Node ≥ 20 and no packages. Do not add npm
