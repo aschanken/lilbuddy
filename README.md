@@ -94,10 +94,10 @@ Upgrading from the zsh-only version? Just pull — the old
 ## Requirements
 
 - **macOS or Linux** (WSL and Termux are detected too)
-- **Node ≥ 22.19** — that is what current [pi] needs; Lil Buddy itself has no
-  npm dependencies
+- **Node ≥ 20** for Lil Buddy itself (no npm dependencies); current [pi]
+  wants 22.19+
 - **[pi coding agent]** (`npm i -g @earendil-works/pi-coding-agent`; verified
-  with 1.6.1)
+  with 0.82.1 and 1.6.1)
 - **`DEEPSEEK_API_KEY`** in your environment
 - Optional: a **Nerd Font** for the robot glyph in the header (auto-detected;
   a plain glyph is used otherwise), and on Linux a clipboard tool
@@ -156,7 +156,7 @@ lil "…"   (shell function: shell/lil.{zsh,bash,fish} — or bin/lil)
    ├─ PI_CODING_AGENT_DIR=lilbuddy/pi pi --mode json -nc \
    │      --exclude-tools bash,edit,write \
    │      --session ~/.cache/lil/session \
-   │      --append-system-prompt "$(fingerprint)" -- "<question>"
+   │      --append-system-prompt "$(fingerprint)" "<question>"
    │        │  JSONL events → live panel (stage, thinking, tools, tokens);
    │        │  text deltas → rendered line by line above the panel; 120s kill
    │        └─ pi → DeepSeek V4 Flash → SYSTEM.md persona (lilbuddy/pi/SYSTEM.md)

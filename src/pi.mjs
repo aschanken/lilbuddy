@@ -4,7 +4,7 @@
 // Invocation contract (unchanged from the zsh wrapper):
 //   PI_CODING_AGENT_DIR=<repo>/pi  pi --mode json -nc \
 //       --exclude-tools bash,edit,write --session <runtime>/session \
-//       --append-system-prompt <fingerprint> -- "<prompt>"     < /dev/null
+//       --append-system-prompt <fingerprint> "<prompt>"        < /dev/null
 // pi's stdin MUST be closed: json mode blocks forever on an open non-tty
 // stdin. bash/edit/write stay excluded here AND in the extension — never
 // re-enable them.
@@ -136,7 +136,11 @@ export function piArgs({ runtime, fingerprint, prompt }) {
   const args = ["--mode", "json", "-nc", "--exclude-tools", "bash,edit,write",
     "--session", path.join(runtime, "session")];
   if (fingerprint) args.push("--append-system-prompt", fingerprint);
-  args.push("--", prompt);
+  // The prompt is a bare positional. Not `-- prompt`: pi only learned the
+  // `--` separator after 0.82, and older builds die with "Unknown option: --".
+  // A question that starts with a dash gets a leading space instead, which
+  // every version reads as a message rather than a flag.
+  args.push(prompt.startsWith("-") ? ` ${prompt}` : prompt);
   return args;
 }
 

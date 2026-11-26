@@ -66,6 +66,9 @@ async function main(argv) {
   return app.run(words.join(" ").trim());
 }
 
+// `lil … | head` closes the pipe early; that is not an error worth a stack trace.
+process.stdout.on("error", (err) => { if (err.code === "EPIPE") process.exit(0); else throw err; });
+
 main(process.argv.slice(2)).then(
   (rc) => { process.exitCode = rc; },
   (err) => {
