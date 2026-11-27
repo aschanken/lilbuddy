@@ -21,6 +21,7 @@ import { extractCmd, stripCmd, isRisky } from "./lilcmd.mjs";
 import { runPi, replay } from "./pi.mjs";
 import { SCENARIOS } from "./demo.mjs";
 import { loadSayings } from "./sayings.mjs";
+import { maybeUpdate, takeNotice } from "./update.mjs";
 import {
   snapshot, fingerprint, cachedNerd, hasNerdFont, writeClipboard, userVar, osKind, findPi, terminalName,
 } from "./platform.mjs";
@@ -455,6 +456,11 @@ export class App {
       return 2;
     }
 
+    // Self-update: a notice if the last run pulled something, and (at most
+    // daily) a detached check for the next one. Never waited on.
+    const updated = this.demo ? "" : takeNotice(this.runtime);
+    if (!this.demo) maybeUpdate({ home: this.home, runtime: this.runtime, env: this.env });
+
     this.setScratchpad(true);
     try {
       for (;;) {
@@ -475,6 +481,7 @@ export class App {
       this.setScratchpad(false);
       this.keys.stop();
       this.live.end();
+      if (updated && this.tty) this.write(`${PAL.GRAY} ↑ lil ${fit(updated, Math.max(20, this.cols - 8))}${PAL.RESET}`);
     }
   }
 

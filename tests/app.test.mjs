@@ -22,7 +22,7 @@ function lil(args, env = {}) {
     input: "",
     env: {
       PATH: process.env.PATH, HOME: runtime, LIL_RUNTIME: runtime, COLUMNS: "80", LIL_NERD_FONT: "1",
-      LIL_PI_BIN: path.join(here, "fake-pi.mjs"), DEEPSEEK_API_KEY: "test", ...env,
+      LIL_PI_BIN: path.join(here, "fake-pi.mjs"), DEEPSEEK_API_KEY: "test", LIL_AUTO_UPDATE: "0", ...env,
     },
   });
   return { ...r, runtime };

@@ -114,6 +114,7 @@ lil how do I find what is listening on port 8080
 lil                       # ask on an input line (no shell quoting to fight)
 lil --demo [port|concept|danger|blocked|error]
 lil --doctor
+lil --update
 ```
 
 While he works:
@@ -146,7 +147,18 @@ stamped `SHELVED` so it is always clear which command is live.
 | `LIL_PARA_GAP=1` | a blank line between paragraphs in answers |
 | `LIL_NERD_FONT=0\|1` | override Nerd Font detection |
 | `LIL_TIMEOUT_SECS` / `LIL_HEAVY_SECS` | kill a run after 120s / show `[HEAVY LOAD]` after 25s |
+| `LIL_AUTO_UPDATE=0` | no background update check |
 | `NO_COLOR=1` | no colour; piped output is always plain |
+
+## Updates
+
+A git checkout keeps itself current. At most once a day a `lil` run starts a
+background check that fetches `origin/main` and fast-forwards; the next run
+shows one line saying what changed. It never slows an answer down and it only
+moves forward: it skips if you are on another branch or have edited tracked
+files, and it never merges, rebases or resets. `lil --update` does the same
+thing right now and tells you the result; `LIL_AUTO_UPDATE=0` turns the
+background check off. The log is `~/.cache/lil/update.log`.
 
 ## How it works
 

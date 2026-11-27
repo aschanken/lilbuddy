@@ -30,13 +30,14 @@ function help() {
     `  ${k("lil")}                                      ${d("ask without fighting shell quoting")}`,
     `  ${k("lil --demo")} ${d("[" + Object.keys(SCENARIOS).join("|") + "]")}   ${d("watch him work, no API key needed")}`,
     `  ${k("lil --doctor")}                             ${d("check this machine is set up")}`,
+    `  ${k("lil --update")}                             ${d("update now (it also checks by itself once a day)")}`,
     `  ${k("lil --version")}  ${k("lil --help")}`,
     "",
     `  ${d("While he works:")}   ${k("Esc")} ${d("stand down ·")} ${k("any key")} ${d("poke him")}`,
     `  ${d("Scratchpad:")}       ${k("⏎")} ${d("dismiss ·")} ${k("^R")} ${d("run ·")} ${k("^Y")} ${d("copy ·")} ${k("^E")} ${d("edit ·")} ${d("type to reply")}`,
     "",
     `  ${d("Tuning (env):")} LIL_MOTION=full|compact|off  LIL_RAMP=classic  LIL_PARA_GAP=1`,
-    `                LIL_NERD_FONT=0|1  LIL_TIMEOUT_SECS=120  LIL_HEAVY_SECS=25  NO_COLOR=1`,
+    `                LIL_NERD_FONT=0|1  LIL_TIMEOUT_SECS=120  LIL_HEAVY_SECS=25  LIL_AUTO_UPDATE=0  NO_COLOR=1`,
   ].join("\n");
 }
 
@@ -49,6 +50,13 @@ async function main(argv) {
   if (first === "--doctor") {
     const { doctor } = await import("./doctor.mjs");
     return doctor({ home: HOME, runtime: RUNTIME });
+  }
+  if (first === "--update") {
+    const { update } = await import("./update.mjs");
+    const res = update(HOME);
+    const good = res.status === "updated" || res.status === "current";
+    console.log(`${good ? PAL.GREEN + " ✓" : PAL.AMBER + " ⚠"} ${res.status}: ${res.detail}${res.subject ? ` — ${res.subject}` : ""}${PAL.RESET}`);
+    return good ? 0 : 1;
   }
   let demo = null;
   let words = argv;

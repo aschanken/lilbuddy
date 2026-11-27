@@ -21,6 +21,7 @@ lil <prompt>                    shell function (shell/lil.{zsh,bash,fish}) or bi
        │                 text / tool_start / tool_end / usage; replay() for --demo
        ├─ render.mjs     markdown → ANSI (Renderer, AnswerStream), scratchpad box
        ├─ lilcmd.mjs     the answer contract: last ```lilcmd / <lilcmd> block
+       ├─ update.mjs     daily background fast-forward of the checkout; --update
        ├─ ui/panel.mjs   the live panel (speech, thought ticker, tools, meta)
        ├─ ui/sprite.mjs  Lil Buddy: 16×12 half-block pixels, moods, CRT power
        ├─ ui/decrypt.mjs the RobCo decryption line
@@ -89,6 +90,10 @@ Key design facts:
   seeded from the repo's `sayings.txt`) replace a stage message once it has
   locked and dwelt 2s; every 5th run a detached child refreshes the pool via
   the DeepSeek chat API (`sayings.mjs --refresh`, never waited on).
+- **Self-update** (`update.mjs`): at most daily, a detached child fetches
+  `origin/main` and `merge --ff-only`s the checkout — only when on `main` with
+  no modified tracked files. Never waited on; every other case is a logged
+  skip. It must stay forward-only: no reset, rebase, stash or checkout.
 - **Model quirk**: deepseek-v4-flash's thinkingLevelMap offers only high/max —
   don't set a lower defaultThinkingLevel, pi will reject it.
 - **Cmd-key chords**: ⌘Enter/⌘C work only via the WezTerm snippet
