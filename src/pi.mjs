@@ -16,6 +16,7 @@ import path from "node:path";
 import { findPi } from "./platform.mjs";
 
 const BLOCKED_PREFIX = "BLOCKED (read-only)";
+const DENIED_PREFIX = "DENIED:";
 
 const toolText = (result) =>
   (result?.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
@@ -89,6 +90,7 @@ export class EventTranslator {
           name: ev.toolName || "",
           isError: Boolean(ev.isError),
           blocked: toolText(ev.result).startsWith(BLOCKED_PREFIX),
+          denied: toolText(ev.result).startsWith(DENIED_PREFIX),
           durationMs: ev.durationMs,
         });
         break;
@@ -146,7 +148,9 @@ export function piArgs({ runtime, fingerprint, prompt }) {
 
 // Run one turn. Resolves with { rc, timedOut, aborted, failure, errTail }.
 // `onEvent` receives the normalised events; `handle.abort()` stops the run.
-export function runPi({ prompt, home, runtime, fingerprint, timeoutMs = 120000, onEvent, env = process.env }) {
+// `askDir`, when given, is where the probe tool may leave approval requests
+// for the human (see pi/probe-guard.ts); without it, such probes are blocked.
+export function runPi({ prompt, home, runtime, fingerprint, timeoutMs = 120000, onEvent, env = process.env, askDir = "" }) {
   const outFile = path.join(runtime, "last.out");
   const errFile = path.join(runtime, "last.err");
   fs.writeFileSync(outFile, "");
@@ -161,7 +165,7 @@ export function runPi({ prompt, home, runtime, fingerprint, timeoutMs = 120000, 
   const bin = findPi(env) || "pi";
   const child = spawn(bin, piArgs({ runtime, fingerprint, prompt }), {
     cwd: runtime,
-    env: { ...env, PI_CODING_AGENT_DIR: path.join(home, "pi"), LIL_RUNTIME: runtime },
+    env: { ...env, PI_CODING_AGENT_DIR: path.join(home, "pi"), LIL_RUNTIME: runtime, LIL_ASK_DIR: askDir },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -176,13 +180,16 @@ export function runPi({ prompt, home, runtime, fingerprint, timeoutMs = 120000, 
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => { errLog.write(chunk); errTail = (errTail + chunk).slice(-2000); });
 
-  const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, timeoutMs);
+  let deadline = Date.now() + timeoutMs;
+  const timer = setInterval(() => {
+    if (Date.now() >= deadline) { timedOut = true; child.kill("SIGTERM"); clearInterval(timer); }
+  }, 250);
 
   const done = new Promise((resolve) => {
     let spawnError = null;
     child.on("error", (err) => { spawnError = err; });
     child.on("close", (code, signal) => {
-      clearTimeout(timer);
+      clearInterval(timer);
       splitter.end();
       outLog.end();
       errLog.end();
@@ -200,6 +207,8 @@ export function runPi({ prompt, home, runtime, fingerprint, timeoutMs = 120000, 
   return {
     done,
     abort() { aborted = true; child.kill("SIGTERM"); },
+    // Time spent waiting on a human keypress is not the model's fault.
+    extend(ms) { deadline += ms; },
   };
 }
 
@@ -229,5 +238,6 @@ export function replay({ timeline, onEvent, speed = 1 }) {
       clearTimeout(timer);
       finish({ rc: 143, timedOut: false, aborted: true, failure: "", errTail: "", sawText: translator.sawText });
     },
+    extend() {},
   };
 }

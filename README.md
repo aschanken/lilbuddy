@@ -41,11 +41,14 @@ Don't have an API key handy? `lil --demo` plays the whole thing back offline.
   invocation and read by pi only if the question needs them.
 - **Fully isolated** — its own `pi/` config dir (`PI_CODING_AGENT_DIR`); your
   main `~/.pi/agent` is never touched.
-- **Hard read-only** — Lil Buddy never changes anything on your machine. pi's
-  built-in `bash`/`edit`/`write` tools are disabled twice over, and the only
-  live-inspection path is the guarded `probe` tool: a strict read-only
-  allowlist, run under plain `sh`, that refuses everything else. When action
-  is needed, he hands the exact command to **you**.
+- **He looks; you decide** — pi's built-in `bash`/`edit`/`write` tools are
+  disabled twice over. The only way he touches your machine is the guarded
+  `probe` tool: read-only inspection commands (and `<tool> --version` /
+  `--help`) just run; anything else stops and shows you the exact command,
+  and runs only if you press `y`. `sudo` is always refused. The thing you
+  actually asked for still arrives in the scratchpad for you to run.
+- **Tables and colour** — comparisons render as aligned tables, and a cell
+  that names a colour is shown in it.
 
 ## Install
 
@@ -119,6 +122,7 @@ While he works:
 |-----|--------|
 | Esc / Ctrl+C | stand him down |
 | anything else | poke him |
+| `y` / `n` | allow or deny a command he asks to run (anything but `y` is no) |
 
 While the scratchpad is open:
 
@@ -183,8 +187,9 @@ Key design points:
 - **Read-only enforcement** — `--exclude-tools bash,edit,write` at invocation,
   plus the extension pins the active tool set to
   `read`/`probe`/`read_clipboard`/`read_terminal` on session start. `probe`
-  (guard in `pi/probe-guard.ts`) returns a BLOCKED message for anything that
-  writes, changes state or could run arbitrary code.
+  (guard in `pi/probe-guard.ts`) runs its read-only allowlist freely; anything
+  that writes, changes state or could run arbitrary code needs your keypress,
+  and is blocked outright when there is nobody to ask (piped output).
 - **Session-per-invocation** — each `lil` run starts a fresh pi session; the
   scratchpad follow-ups keep that same session alive.
 

@@ -13,7 +13,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { guardProbe, runProbe, BLOCKED_MESSAGE } from "../probe-guard.ts";
+import { guardProbe, runProbe, requestApproval, BLOCKED_MESSAGE, DENIED_MESSAGE } from "../probe-guard.ts";
 
 const MAX_CHARS = 8000;
 
@@ -69,19 +69,28 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "probe",
-    label: "Probe (read-only)",
+    label: "Probe",
     description:
-      "Run a READ-ONLY inspection command on the user's machine. The guard refuses anything that writes, installs, or modifies state.",
+      "Run an inspection command on the user's machine. Read-only commands run at once. Anything else is shown to the human, who must approve that exact command before it runs; expect BLOCKED or DENIED otherwise. Never use this to carry out what the user asked for — that goes in the lilcmd block.",
     parameters: Type.Object({
       command: Type.String({
-        description: "Read-only inspection command to run.",
+        description: "Inspection command to run (POSIX sh).",
       }),
     }),
     async execute(_callId, params) {
       const verdict = guardProbe(params.command);
-      const text = verdict.allowed
-        ? await runProbe(params.command)
-        : BLOCKED_MESSAGE;
+      let text: string;
+      if (verdict.allowed) {
+        text = await runProbe(params.command);
+      } else if (!verdict.ask) {
+        text = BLOCKED_MESSAGE;
+      } else {
+        // Not on the read-only list: only the human can let it through.
+        const approval = await requestApproval(params.command);
+        text = approval === "approved" ? await runProbe(params.command)
+          : approval === "denied" ? DENIED_MESSAGE
+          : BLOCKED_MESSAGE;
+      }
       return { content: [{ type: "text", text }], details: {} };
     },
   });
