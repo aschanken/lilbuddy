@@ -4,21 +4,32 @@
 // (extension discovery globs only <configdir>/extensions/*.ts). No pi/typebox
 // imports: unit-testable directly with `node` type-stripping.
 //
-// Policy: reject anything that could mutate state or run arbitrary code;
-// allow a fixed allowlist of read-only inspection commands, each narrowed to
-// its read-only flags and subcommands. When in doubt, block — a blocked
-// probe costs one round trip, the model just hands the command to the human.
+// Policy, in three tiers:
+//   allow — a fixed allowlist of read-only inspection commands, each narrowed
+//           to its read-only flags and subcommands, plus `<tool> --version`
+//           and `<tool> --help` for any tool. These just run.
+//   ask   — everything else. It runs only if the human at the keyboard says
+//           yes to that exact command (see requestApproval). With nobody to
+//           ask — piped output, an old engine — it is blocked.
+//   deny  — sudo: there is no terminal for a password, and privileged
+//           commands belong in the lilcmd block where the human runs them.
+// When in doubt a command is "ask", never "allow".
 //
 // The persona's promises are flavor. THIS is the enforcement.
 
 import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
 export const BLOCKED_MESSAGE =
   "BLOCKED (read-only): Lil Buddy proposes commands; the human runs them. Put it in the lilcmd block instead.";
+
+export const DENIED_MESSAGE =
+  "DENIED: the human declined to let you run that. Do not retry it. Answer with what you know, or put the command in the lilcmd block for them to run.";
 
 const ALLOWLIST = new Set([
   // everywhere
@@ -28,7 +39,10 @@ const ALLOWLIST = new Set([
   "df", "du", "ps", "pgrep", "lsof", "netstat", "printenv", "env", "echo", "grep",
   "awk", "sed", "sort", "uniq", "tr", "cut", "column", "xargs", "find", "locale",
   "getconf", "git", "tmux", "node", "python3", "zsh", "bash", "fish", "pip", "pip3",
-  "npm",
+  "npm", "diff", "cmp", "md5", "md5sum", "shasum", "sha256sum", "dig", "host",
+  "nslookup",
+  // modern replacements people actually have installed
+  "eza", "exa", "lsd", "tree", "bat", "rg", "fd", "jq",
   // macOS
   "sw_vers", "launchctl", "brew", "defaults", "sysctl", "ioreg", "system_profiler",
   "mdfind",
@@ -93,7 +107,16 @@ const DENY_FLAGS: Record<string, RegExp> = {
   date: /^(--set(=.*)?|-(?!I)[a-zA-Z]*s)$/,
   awk: /^(-f|--file|-i|--include|-l|--load|-E|--exec)(=|$)/,
   ip: /^(-b|-batch|-force)$/,
+  fd: /^(-[a-zA-Z]*[xX]|--exec|--exec-batch)(=|$)/,
+  rg: /^(--pre|--pre-glob|--hostname-bin)(=|$)/,
+  bat: /^(--pager|--diff-context)(=|$)/,
+  tree: /^(-o|--output)(=|$)/,
 };
+
+// `<tool> --version` / `<tool> --help` is how you find out what a tool is.
+// Any plainly named command may be asked exactly that and nothing more.
+const INFO_FLAGS = new Set(["--version", "--help", "-V"]);
+const PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
 const IP_MUTATING = new Set([
   "add", "del", "delete", "set", "flush", "change", "replace", "append", "prepend",
@@ -110,20 +133,22 @@ const GIT_OK = new Set([
 const ALLOWED_REDIRECTS = ["2>/dev/null", "&>/dev/null", ">/dev/null", "2>&1"];
 
 export interface GuardResult {
-  allowed: boolean;
+  allowed: boolean;   // runs without asking anyone
+  ask: boolean;       // not allowed outright, but the human may approve it
   reason: string;
 }
 
-const no = (reason: string): GuardResult => ({ allowed: false, reason });
+const no = (reason: string): GuardResult => ({ allowed: false, ask: true, reason });
+const never = (reason: string): GuardResult => ({ allowed: false, ask: false, reason });
 
 export function guardProbe(rawCmd: string): GuardResult {
-  if (typeof rawCmd !== "string" || rawCmd.trim() === "") return no("empty command");
+  if (typeof rawCmd !== "string" || rawCmd.trim() === "") return never("empty command");
   const cmd = rawCmd.trim();
 
   // Rule 1: banned substrings, with the allowed redirect literals exempt.
   let bare = cmd;
   for (const lit of ALLOWED_REDIRECTS) bare = bare.split(lit).join(" ");
-  if (cmd.includes("sudo")) return no("contains sudo");
+  if (/(^|[\s;|&(])sudo(\s|$)/.test(cmd) || /(^|[\s;|&(])(doas|su)\s/.test(cmd)) return never("contains sudo");
   if (cmd.includes("`")) return no("contains backtick");
   if (cmd.includes("$(")) return no("contains $(");
   if (bare.includes(">") || bare.includes("<")) return no("contains redirection");
@@ -140,6 +165,7 @@ export function guardProbe(rawCmd: string): GuardResult {
     const args = tokens.slice(1);
     const positional = args.filter((t) => !t.startsWith("-"));
 
+    if (tokens.length === 2 && PLAIN_NAME.test(first) && INFO_FLAGS.has(second) && !INTERPRETERS.has(first)) continue;
     if (!ALLOWLIST.has(first)) return no(`first token not allowlisted: ${first}`);
 
     // Rule 3: per-command constraints.
@@ -258,7 +284,44 @@ export function guardProbe(rawCmd: string): GuardResult {
     }
   }
 
-  return { allowed: true, reason: "" };
+  return { allowed: true, ask: false, reason: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Asking the human. pi runs with its stdin closed, so the probe tool cannot
+// prompt anyone itself. The engine that launched pi (src/app.mjs) watches
+// $LIL_ASK_DIR: we drop <id>.req there, it shows the command and writes
+// <id>.ans ("yes" / "no") when a key is pressed. No directory, no reader or
+// no answer in time all mean "not approved".
+// ---------------------------------------------------------------------------
+export type Approval = "approved" | "denied" | "unavailable";
+
+export async function requestApproval(
+  cmd: string,
+  { dir = process.env.LIL_ASK_DIR, timeoutMs = 90_000, pollMs = 80 }: { dir?: string; timeoutMs?: number; pollMs?: number } = {},
+): Promise<Approval> {
+  if (!dir) return "unavailable";
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const req = join(dir, `${id}.req`);
+  const ans = join(dir, `${id}.ans`);
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${req}.tmp`, JSON.stringify({ id, command: cmd }));
+    renameSync(`${req}.tmp`, req);          // appears whole or not at all
+  } catch {
+    return "unavailable";
+  }
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (Date.now() < deadline) {
+      if (existsSync(ans)) return readFileSync(ans, "utf8").trim() === "yes" ? "approved" : "denied";
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    return "denied";
+  } finally {
+    rmSync(req, { force: true });
+    rmSync(ans, { force: true });
+  }
 }
 
 // Probes run under plain POSIX sh on every platform. zsh would add ways to

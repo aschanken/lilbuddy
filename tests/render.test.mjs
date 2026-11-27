@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { setCaps, stripAnsi } from "../src/ui/ansi.mjs";
 import { render, scratchpadBox, hintRow, AnswerStream, inline, wrapProse } from "../src/render.mjs";
+import { width } from "../src/ui/ansi.mjs";
 import { stripCmd, extractCmd } from "../src/lilcmd.mjs";
 
 setCaps({ color: true, truecolor: false });
@@ -151,4 +152,58 @@ test("hint row: ⌘ chords are advertised on macOS only", () => {
   assert.ok(stripAnsi(hintRow({ hasCmd: true, mac: true })).includes("⌘⏎"));
   assert.equal(stripAnsi(hintRow({ hasCmd: true, mac: false })), "    [⏎ dismiss]  [^R RUN]  [^Y copy]  [✏ type to reply]");
   assert.equal(stripAnsi(hintRow({ hasCmd: false })), "    [⏎ dismiss]  [✏ type to reply]");
+});
+
+// --- tables -----------------------------------------------------------------
+
+const TABLE = [
+  "Intro line.",
+  "| Color | Meaning |",
+  "|---|---|",
+  "| bold blue | directory |",
+  "| magenta / purple | images & video |",
+  "| plain/default | regular file with `a | b` in it |",
+  "After.",
+].join("\n");
+
+test("tables: aligned columns, header rule, no raw pipes, set off by blank lines", () => {
+  const out = stripAnsi(render(TABLE, 80)).split("\n");
+  assert.deepEqual(out, [
+    "  Intro line.",
+    "",
+    "  Color             Meaning",
+    "  ────────────────  ─────────────────────────────",
+    "  bold blue         directory",
+    "  magenta / purple  images & video",
+    "  plain/default     regular file with a | b in it",
+    "",
+    "  After.",
+  ]);
+});
+
+test("tables: a cell that only names a colour is painted in it", () => {
+  const out = render(TABLE, 80);
+  assert.ok(out.includes("\x1b[1m\x1b[38;5;75mbold blue\x1b[0m"));
+  assert.ok(out.includes("\x1b[38;5;170mmagenta\x1b[0m / \x1b[38;5;141mpurple\x1b[0m"));
+  assert.ok(!out.includes("\x1b[38;5;75mplain"));
+});
+
+test("tables: wide tables wrap inside their columns and never exceed the width", () => {
+  const wide = "| Key | What it does |\n|:--|--:|\n| `--icons=auto` | " + "shows a glyph per file type when the output is a terminal ".repeat(3) + "|";
+  for (const w of [40, 60, 100]) {
+    const lines = stripAnsi(render(wide, w)).split("\n").filter(Boolean);
+    assert.ok(lines.length > 3, `wrapped @${w}`);
+    for (const l of lines) assert.ok(width(l) <= w - 2, `${width(l)} > ${w - 2}: ${l}`);
+  }
+});
+
+test("tables: streamed output equals batch output; pipes without a rule stay prose", () => {
+  for (const chunk of [1, 5, 40]) {
+    const s = new AnswerStream(80);
+    const out = [];
+    for (let i = 0; i < TABLE.length; i += chunk) out.push(...s.write(TABLE.slice(i, i + chunk)));
+    out.push(...s.end());
+    assert.equal(out.join("\n"), render(TABLE, 80));
+  }
+  assert.equal(stripAnsi(render("| not | a table |\nplain", 80)), "  | not | a table |\n  plain");
 });

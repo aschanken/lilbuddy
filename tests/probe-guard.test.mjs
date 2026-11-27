@@ -1,7 +1,10 @@
 // probe-guard.test.mjs — unit table for the read-only probe guard.
 // Imports the REAL guard from pi/probe-guard.ts (Node type-stripping, 22.18+).
 // Run: node tests/probe-guard.test.mjs
-import { guardProbe, runProbe, PROBE_SHELL } from "../pi/probe-guard.ts";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { guardProbe, runProbe, requestApproval, PROBE_SHELL } from "../pi/probe-guard.ts";
 
 const CASES = [
   // [command, expected, label]
@@ -148,6 +151,34 @@ const CASES = [
   ["command rm -rf /tmp/x", false, "BLOCK command <cmd>"],
   ["fish -c 'rm x'", false, "BLOCK fish -c"],
   ["file -C -m magic", false, "BLOCK file -C"],
+
+  // The calls that were blocked in the wild (eza question, 2026-11-27).
+  ["eza --version | head -1", true, "ALLOW eza --version"],
+  ["eza -l --icons=always --color=always ~ | head -25", true, "ALLOW eza listing"],
+  ["tree -L 2 /etc", true, "ALLOW tree"],
+  ["bat --style=plain /etc/hosts", true, "ALLOW bat"],
+  ["rg -n PATH ~/.zshrc", true, "ALLOW rg"],
+  ["fd -e md . /tmp", true, "ALLOW fd"],
+  ["jq .name package.json", true, "ALLOW jq"],
+  ["dig +short example.com", true, "ALLOW dig"],
+  // Any tool may be asked what it is, and nothing more.
+  ["cowsay --version", true, "ALLOW <tool> --version"],
+  ["kubectl --help", true, "ALLOW <tool> --help"],
+  ["wezterm -V", true, "ALLOW <tool> -V"],
+  ["cowsay --version moo", false, "ASK <tool> --version + extra args"],
+  ["./evil --version", false, "ASK path-qualified --version"],
+  ["shutdown -h", false, "ASK -h is not an info flag"],
+  ["fd -x rm {}", false, "ASK fd -x"],
+  ["rg --pre ./x foo", false, "ASK rg --pre"],
+  ["bat --pager 'sh -c id' f", false, "ASK bat --pager"],
+  ["tree -o /tmp/out", false, "ASK tree -o"],
+];
+
+// Everything not allowed outright may be put to the human — except sudo.
+const ASK = [
+  ["brew install eza", true], ["rm -rf /tmp/x", true], ["echo hi > /tmp/f", true],
+  ["kubectl get pods", true], ["ls -la", false], ["sudo ls", false], ["", false],
+  ["echo pseudocode", false],
 ];
 
 let pass = 0;
@@ -162,11 +193,41 @@ for (const [cmd, expected, label] of CASES) {
   }
 }
 
+for (const [cmd, wantAsk] of ASK) {
+  const v = guardProbe(cmd);
+  if (v.ask === wantAsk && !(v.ask && v.allowed)) pass++;
+  else failures.push(`FAIL ask(${JSON.stringify(cmd)}) expected ${wantAsk} got ${v.ask}`);
+}
+if (guardProbe("sudoedit --version").allowed !== true) failures.push("FAIL sudo match is too greedy");
+
+// Approval protocol: a request file appears, the answer file decides.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lil-ask-"));
+  const answer = (word) => {
+    const t = setInterval(() => {
+      const req = fs.readdirSync(dir).find((f) => f.endsWith(".req"));
+      if (!req) return;
+      clearInterval(t);
+      const { id, command } = JSON.parse(fs.readFileSync(path.join(dir, req), "utf8"));
+      if (command === "brew install eza") fs.writeFileSync(path.join(dir, `${id}.ans`), word);
+    }, 20);
+  };
+  answer("yes");
+  const yes = await requestApproval("brew install eza", { dir, pollMs: 10 });
+  answer("no");
+  const nope = await requestApproval("brew install eza", { dir, pollMs: 10 });
+  const silent = await requestApproval("brew install eza", { dir, pollMs: 10, timeoutMs: 120 });
+  const nobody = await requestApproval("brew install eza", { dir: "" });
+  const got = [yes, nope, silent, nobody].join(",");
+  if (got === "approved,denied,denied,unavailable" && fs.readdirSync(dir).length === 0) pass++;
+  else failures.push(`FAIL approval protocol -> ${got}; left ${fs.readdirSync(dir)}`);
+}
+
 // Probes run under plain sh on every platform, never zsh.
 if (PROBE_SHELL !== "/bin/sh") failures.push(`FAIL probe shell is ${PROBE_SHELL}`);
 const echoed = await runProbe("echo vault111 | tr a-z A-Z");
 if (echoed === "VAULT111") pass++; else failures.push(`FAIL runProbe pipeline -> ${JSON.stringify(echoed)}`);
 
 for (const f of failures) console.log(f);
-console.log(`${pass}/${CASES.length + 1} passed, ${failures.length} failed`);
+console.log(`${pass}/${CASES.length + ASK.length + 2} passed, ${failures.length} failed`);
 process.exit(failures.length === 0 ? 0 : 1);
