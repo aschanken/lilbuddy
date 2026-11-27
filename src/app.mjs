@@ -16,7 +16,7 @@ import { PAL, width, sliceCells, fit } from "./ui/ansi.mjs";
 import { Live, Keys, sleep } from "./ui/term.mjs";
 import { Panel, header, headerLive } from "./ui/panel.mjs";
 import { JUNK } from "./ui/decrypt.mjs";
-import { AnswerStream, render, scratchpadBox, hintRow } from "./render.mjs";
+import { AnswerStream, render, scratchpadBox, hintRow, wrapHard } from "./render.mjs";
 import { extractCmd, stripCmd, isRisky } from "./lilcmd.mjs";
 import { runPi, replay } from "./pi.mjs";
 import { SCENARIOS } from "./demo.mjs";
@@ -112,12 +112,39 @@ export class App {
     const t0 = now();
     panel.begin(t0);
 
+    // A probe outside the read-only list waits here for a yes or no.
+    const askDir = path.join(this.runtime, "ask");
+    const canAsk = this.interactive && !this.demo && motion !== "off";
+    fs.rmSync(askDir, { recursive: true, force: true });
+    if (canAsk) fs.mkdirSync(askDir, { recursive: true });
+    let asking = null;           // { id, command, since }
+    let askPoll = 0;
+    const askLines = () => {
+      if (!asking) return [];
+      const risky = isRisky(asking.command);
+      const edge = risky ? PAL.RED : PAL.AMBER;
+      const w = Math.max(20, Math.min(this.cols, 100) - 8);
+      return [
+        `${edge} ⚠ ${risky ? "THIS ONE BITES — he" : "He"} wants to run this on your machine:${PAL.RESET}`,
+        ...wrapHard(asking.command, w).map((l) => `${PAL.GRAY}  ┃ ${PAL.RESET}${PAL.BOLD}${PAL.GREEN}${l}${PAL.RESET}`),
+        `    ${PAL.GRAY}[${PAL.AMBER}y${PAL.RESET} ${PAL.BOLD}${PAL.GREEN}allow${PAL.RESET}${PAL.GRAY}]  [${PAL.AMBER}n${PAL.RESET} ${PAL.DIM}deny${PAL.RESET}${PAL.GRAY}]${PAL.RESET}`,
+        "",
+      ];
+    };
+    const answerAsk = (yes) => {
+      if (!asking) return;
+      try { fs.writeFileSync(path.join(askDir, `${asking.id}.ans`), yes ? "yes" : "no"); } catch { /* treated as no */ }
+      handle.extend(now() - asking.since);
+      asking = null;
+      panel.settle(now());
+    };
+
     const liveHeader = () => (this.headerDone ? [] : [headerLive(now(), t0, this.nerd)]);
     const region = () => {
       const t = now();
       const top = current ? [this.#revealing(current, t)] : this.headerDone ? [""] : [];
-      if (motion === "compact") return [...liveHeader(), ...(current ? top : []), ...panel.compact(t, this.cols)];
-      return [...liveHeader(), ...top, ...(current ? [""] : []), ...panel.lines(t, this.cols)];
+      if (motion === "compact") return [...liveHeader(), ...(current ? top : []), ...askLines(), ...panel.compact(t, this.cols)];
+      return [...liveHeader(), ...top, ...(current ? [""] : []), ...askLines(), ...panel.lines(t, this.cols)];
     };
 
     const commit = (lines) => {
@@ -129,6 +156,16 @@ export class App {
 
     const frame = () => {
       const t = now();
+      if (canAsk && !asking && t - askPoll > 120) {
+        askPoll = t;
+        try {
+          const req = fs.readdirSync(askDir).find((f) => f.endsWith(".req"));
+          if (req) {
+            asking = { ...JSON.parse(fs.readFileSync(path.join(askDir, req), "utf8")), since: t };
+            panel.ask(t);
+          }
+        } catch { /* half-written or gone: look again next time */ }
+      }
       panel.tick(t, Math.min(this.cols, 100) - 26);
       // Reveal: a decrypt edge wipes each line in, and speeds up to match
       // however fast the model is actually writing.
@@ -185,18 +222,26 @@ export class App {
       if (cachedNerd(this.runtime) !== null) this.nerd = cachedNerd(this.runtime);
       handle = runPi({
         prompt, home: this.home, runtime: this.runtime, fingerprint: fp,
-        timeoutMs: this.timeoutMs, onEvent, env: this.env,
+        timeoutMs: this.timeoutMs, onEvent, env: this.env, askDir: canAsk ? askDir : "",
       });
     }
 
     // While he works: Esc / ^C stands him down, anything else just annoys him.
     this.keys.on((key) => {
+      if (asking) {
+        // Only an explicit y lets a command through; every other answer is no.
+        if (key.name === "char" && (key.ch === "y" || key.ch === "Y")) answerAsk(true);
+        else if (key.name === "ctrl-c") { answerAsk(false); handle.abort(); }
+        else if (key.name === "esc" || key.name === "enter" || (key.name === "char" && /[nNqQ]/.test(key.ch))) answerAsk(false);
+        return;
+      }
       if (key.name === "esc" || key.name === "ctrl-c") handle.abort();
       else panel.poke(now());
     });
 
     const result = await handle.done;
     this.keys.on(null);
+    asking = null;
     pending.push(...stream.end());
     finished = true;
 

@@ -126,10 +126,21 @@ export class Panel {
     this.tools.push({ id, label, detail: String(detail(args)).replace(/\s+/g, " "), start: now, status: "run" });
   }
 
-  toolEnd(id, { isError = false, blocked = false, durationMs } = {}, now) {
+  // He is waiting on the human to approve a probe: wide amber eyes until
+  // settle() is called.
+  ask(now) {
+    this.override = { mood: "blocked", until: Infinity, since: now };
+    this.#say("PERMISSION TO PROCEED, BOSS?", now);
+  }
+  settle(now) {
+    this.override = null;
+    this.#say(stageMessage(this.stage || "start"), now);
+  }
+
+  toolEnd(id, { isError = false, blocked = false, denied = false, durationMs } = {}, now) {
     const tool = this.tools.find((t) => t.id === id);
     if (!tool) return;
-    tool.status = blocked ? "blocked" : isError ? "error" : "ok";
+    tool.status = denied ? "denied" : blocked ? "blocked" : isError ? "error" : "ok";
     tool.ms = durationMs ?? now - tool.start;
     if (blocked) this.override = { mood: "blocked", until: now + 900, since: now };
   }
@@ -199,8 +210,9 @@ export class Panel {
       if (this.override) mood = this.override.mood;
       this.#setMood(mood, this.override ? this.override.since : now);
       // A fully locked line dwells for two seconds, then one of the sayings
-      // takes its place. Stage changes always cut in immediately.
-      if (this.speech.settled && this.sayings.length) {
+      // takes its place. Stage changes always cut in immediately. A pending
+      // question to the human is never talked over.
+      if (this.speech.settled && this.sayings.length && this.override?.until !== Infinity) {
         if (!this.dwellSince) this.dwellSince = now;
         else if (now - this.dwellSince >= 2000) {
           let pick = this.sayings[Math.floor(this.random() * this.sayings.length)];
@@ -254,6 +266,8 @@ export class Panel {
       status = `${PAL.GREEN}✓ ${PAL.GRAY}${ms}`; statusW = 2 + ms.length;
     } else if (tool.status === "blocked") {
       status = `${PAL.RED}✗ BLOCKED`; statusW = 9;
+    } else if (tool.status === "denied") {
+      status = `${PAL.AMBER}✗ DENIED`; statusW = 8;
     } else {
       status = `${PAL.RED}✗ failed`; statusW = 8;
     }

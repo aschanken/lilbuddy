@@ -42,8 +42,8 @@ Key design facts:
   original zsh renderer (commit 06c2b3d). `render()` and `AnswerStream` must
   reproduce them byte for byte — including the quirk that empty source lines
   are dropped (zsh `"${(f)text}"`), which is why paragraphs sit flush. The
-  deliberate deviations are listed at the top of `src/render.mjs`, each with a
-  test. The answer screen uses ONLY the `PAL` 256-colour escapes; truecolor is
+  deliberate deviations (tables among them) are listed at the top of
+  `src/render.mjs`, each with a test. The answer screen uses ONLY the `PAL` 256-colour escapes; truecolor is
   for the transient panel.
 - **Everything animated is transient.** The panel lives in `Live`'s redrawable
   region and is gone before the prompt returns; committed lines are permanent.
@@ -68,15 +68,24 @@ Key design facts:
   prompt is a bare positional — never `-- prompt`: pi 0.82 rejects the
   separator. A question starting with `-` gets a leading space instead. Provider usage often arrives only when a response completes; the
   token counter estimates until then.
-- **Read-only enforcement is tool-layer, twice**: `--exclude-tools
-  bash,edit,write` on the CLI AND `pi.setActiveTools([read, probe,
-  read_clipboard, read_terminal])` on session_start in the extension. The
-  `probe` tool (pi/probe-guard.ts) allowlists read-only commands, narrows each
-  to read-only flags/subcommands, and runs them under `/bin/sh` — never zsh,
-  whose `=(…)` and glob qualifiers can execute code a text guard cannot see.
-  Persona promises are flavor, the guard is the enforcement. Never re-enable
-  bash/edit/write; when extending the allowlist, add a BLOCK case to
+- **He looks, the human decides — enforced at the tool layer, twice**:
+  `--exclude-tools bash,edit,write` on the CLI AND `pi.setActiveTools([read,
+  probe, read_clipboard, read_terminal])` on session_start in the extension.
+  The `probe` tool (pi/probe-guard.ts) has three tiers: **allow** (a read-only
+  allowlist, each command narrowed to read-only flags/subcommands, plus
+  `<tool> --version|--help|-V`), **ask** (everything else: runs only after the
+  human approves that exact command), **deny** (`sudo`). Probes run under
+  `/bin/sh` — never zsh, whose `=(…)` and glob qualifiers can execute code a
+  text guard cannot see. Persona promises are flavor, the guard is the
+  enforcement. Never re-enable bash/edit/write; a command is "ask" unless
+  proven read-only; when extending the allowlist, add a case to
   `tests/probe-guard.test.mjs` for every way the new command can write.
+- **Approval is a file handshake**: pi's stdin is closed, so the tool drops
+  `<id>.req` in `$LIL_ASK_DIR` (`$LIL_RUNTIME/ask`) and polls for `<id>.ans`;
+  `app.mjs` shows the command above the panel and writes `yes` only on an
+  explicit `y`. The engine sets `LIL_ASK_DIR` only when someone can answer
+  (interactive tty, motion on); otherwise "ask" degrades to BLOCKED. Time
+  spent waiting on the human is added back to the run's timeout.
 - **Sayings**: random lines from a rotating pool (`~/.cache/lil/sayings.txt`,
   seeded from the repo's `sayings.txt`) replace a stage message once it has
   locked and dwelt 2s; every 5th run a detached child refreshes the pool via

@@ -10,9 +10,11 @@
 //   * `code` inside **bold** loses its literal backticks
 //   * headers drop inline markers instead of shouting them
 //   * blank lines inside a code fence survive
+//   * markdown tables are laid out as aligned columns instead of raw pipes,
+//     and a cell that is just a colour name is painted in that colour
 //   * it can render incrementally, one source line at a time (Renderer.push)
 
-import { PAL, width, fit, charWidth } from "./ui/ansi.mjs";
+import { PAL, width, fit, charWidth, stripAnsi, idx, pad } from "./ui/ansi.mjs";
 import {
   OPEN_FENCE, OPEN_TAG, CLOSE_FENCE, CLOSE_TAG, ONE_LINE_TAG,
 } from "./lilcmd.mjs";
@@ -127,6 +129,95 @@ export function inline(lines) {
   return out.split("\n");
 }
 
+// --- tables ----------------------------------------------------------------
+
+const TABLE_ROW = /^\|.*\|/;
+const TABLE_RULE = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+// Split a row on pipes, leaving pipes inside `code` and escaped \| alone.
+function splitRow(line) {
+  const cells = [];
+  let cur = "";
+  let inCode = false;
+  const body = line.trim().replace(/^\|/, "").replace(/\|\s*$/, "");
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "`") inCode = !inCode;
+    if (ch === "\\" && body[i + 1] === "|") { cur += "|"; i++; continue; }
+    if (ch === "|" && !inCode) { cells.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+// A cell that only names a colour ("bold blue", "magenta / purple") is shown
+// in that colour — the answer to "what does red mean" should look red.
+const SWATCH = {
+  red: 203, green: 78, blue: 75, cyan: 80, magenta: 170, purple: 141, violet: 141,
+  yellow: 221, orange: 208, amber: 214, pink: 211, white: 255, gray: 245, grey: 245, black: 240,
+};
+const SWATCH_RE = new RegExp(`^((?:(?:bold|bright|light|dark|dim)\\s+)*)(${Object.keys(SWATCH).join("|")})$`, "i");
+
+function swatch(text) {
+  const parts = text.split(/(\s*\/\s*)/);
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2) { out.push(parts[i]); continue; }
+    const m = parts[i].match(SWATCH_RE);
+    if (!m) return null;
+    const bold = /bold|bright/i.test(m[1]) ? PAL.BOLD : "";
+    out.push(`${bold}${idx(SWATCH[m[2].toLowerCase()])}${parts[i]}${PAL.RESET}`);
+  }
+  return out.join("");
+}
+
+// Lay a parsed table out within `CW` cells. → output lines (no blank padding).
+export function layoutTable(rows, aligns, CW) {
+  const n = Math.max(...rows.map((r) => r.length));
+  for (const r of rows) while (r.length < n) r.push("");
+  const plainW = (cell) => width(stripAnsi(inline([cell])[0] ?? ""));
+  const natural = Array.from({ length: n }, (_, c) => Math.max(3, ...rows.map((r) => plainW(r[c]))));
+  // Columns that fit keep their natural width; the rest share what is left.
+  const room = Math.max(n * 6, CW - 2 * (n - 1));
+  const widths = natural.slice();
+  let left = room;
+  let open = widths.map((_, i) => i).sort((a, b) => natural[a] - natural[b]);
+  while (open.length) {
+    const share = Math.floor(left / open.length);
+    const i = open[0];
+    if (natural[i] <= share) { left -= natural[i]; open = open.slice(1); continue; }
+    for (const j of open) widths[j] = Math.max(6, share);
+    break;
+  }
+  const cellLines = (cell, w, head) => {
+    const painted = !head && swatch(cell);
+    if (painted) return [painted];
+    // Widths are measured on what is displayed, not on the markdown markers.
+    const shown = (l) => width(stripAnsi(inline([l])[0] ?? ""));
+    const wrapped = shown(cell) <= w ? [cell]
+      : wrapProse(cell, w).flatMap((l) => (shown(l) > w ? wrapHard(l, w) : [l]));
+    const styled = inline(wrapped.length ? wrapped : [""]);
+    return head ? styled.map((l) => `${PAL.BOLD}${PAL.GREEN}${stripAnsi(l)}${PAL.RESET}`) : styled;
+  };
+  const place = (text, w, align) => {
+    const gap = Math.max(0, w - width(text));
+    if (align === "right") return " ".repeat(gap) + text;
+    if (align === "center") return " ".repeat(gap >> 1) + text + " ".repeat(gap - (gap >> 1));
+    return pad(text, w);
+  };
+  const out = [];
+  rows.forEach((row, r) => {
+    const cols = row.map((cell, c) => cellLines(cell, widths[c], r === 0));
+    const height = Math.max(...cols.map((c) => c.length));
+    for (let k = 0; k < height; k++) {
+      out.push(("  " + cols.map((c, i) => place(c[k] ?? "", widths[i], aligns[i])).join("  ")).replace(/\s+$/, ""));
+    }
+    if (r === 0) out.push(`  ${PAL.AMBER}${widths.map((w) => "─".repeat(w)).join("  ")}${PAL.RESET}`);
+  });
+  return out;
+}
+
 export class Renderer {
   constructor(cols, { paraGap = false } = {}) {
     const c = clampCols(cols);
@@ -137,10 +228,47 @@ export class Renderer {
     this.prevBlank = false;
     this.count = 0;
     this.last = "";
+    this.table = null;   // source lines of a table still arriving
+  }
+
+  // Rows are buffered until the table ends, because column widths depend on
+  // every row. Something that only looked like a table is rendered as prose.
+  #flushTable() {
+    const lines = this.table;
+    this.table = null;
+    if (!lines) return [];
+    if (lines.length < 2 || !TABLE_RULE.test(lines[1])) {
+      return lines.flatMap((ln) => this.#block(ln));
+    }
+    const aligns = splitRow(lines[1]).map((c) =>
+      (c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : "left"));
+    const rows = [lines[0], ...lines.slice(2)].map(splitRow);
+    const out = [];
+    const emit = (s) => { out.push(s); this.count++; this.last = s; };
+    if (this.count > 0 && this.last !== "") emit("");
+    for (const l of layoutTable(rows, aligns, this.CW)) emit(l);
+    emit("");
+    this.prevBlank = true;
+    return out;
+  }
+
+  // Call when the source is exhausted.
+  end() { return this.#flushTable(); }
+
+  push(ln) {
+    if (!this.inFence) {
+      const t = ln.trim();
+      if (TABLE_ROW.test(t) || (this.table && TABLE_RULE.test(t) && t.includes("-"))) {
+        (this.table ??= []).push(t);
+        return [];
+      }
+      if (this.table) return [...this.#flushTable(), ...this.#block(ln)];
+    }
+    return this.#block(ln);
   }
 
   // Feed one source line; returns the output lines it produced.
-  push(ln) {
+  #block(ln) {
     const out = [];
     const emit = (s) => { out.push(s); this.count++; this.last = s; };
     const gap = () => { if (this.count > 0 && this.last !== "") emit(""); };
@@ -205,6 +333,7 @@ export function render(text, cols, opts) {
   const r = new Renderer(cols, opts);
   const out = [];
   for (const ln of text.split("\n")) out.push(...r.push(ln));
+  out.push(...r.end());
   return out.join("\n");
 }
 
@@ -283,6 +412,7 @@ export class AnswerStream {
       out.push(...this.#line(ln));
     }
     if (this.heldOpen) out.push(...this.#flushHeld()); // never closed → not a command
+    out.push(...this.renderer.end());
     return out;
   }
 }
