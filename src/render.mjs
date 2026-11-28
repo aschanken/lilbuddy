@@ -456,6 +456,16 @@ export function scratchpadBox(cmd, cols, { stamp = "AWAITING ORDERS", tone = "am
   return lines;
 }
 
+// "1,960 tok  $0.0003" — what the conversation has used so far. Small costs
+// keep enough decimals to be non-zero; "" when nothing was reported.
+export function usageLabel({ tokens = 0, cost = 0 } = {}) {
+  if (!(tokens > 0)) return "";
+  const tok = `${Math.round(tokens).toLocaleString("en-US")} tok`;
+  if (!(cost > 0)) return tok;
+  const money = cost >= 1 ? cost.toFixed(2) : cost >= 0.01 ? cost.toFixed(3) : cost >= 0.0001 ? cost.toFixed(4) : "<0.0001";
+  return `${tok}  ${money.startsWith("<") ? "<$0.0001" : `$${money}`}`;
+}
+
 const hint = (keys, label, strong) =>
   `${PAL.GRAY}[${PAL.RESET}${PAL.AMBER}${keys}${PAL.RESET} ` +
   `${strong ? PAL.BOLD + PAL.GREEN : PAL.DIM}${label}${PAL.RESET}${PAL.GRAY}]${PAL.RESET}`;

@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { setCaps, stripAnsi } from "../src/ui/ansi.mjs";
-import { render, scratchpadBox, hintRow, AnswerStream, inline, wrapProse } from "../src/render.mjs";
+import { render, scratchpadBox, hintRow, AnswerStream, inline, wrapProse, usageLabel } from "../src/render.mjs";
 import { width } from "../src/ui/ansi.mjs";
 import { stripCmd, extractCmd } from "../src/lilcmd.mjs";
 
@@ -206,4 +206,13 @@ test("tables: streamed output equals batch output; pipes without a rule stay pro
     assert.equal(out.join("\n"), render(TABLE, 80));
   }
   assert.equal(stripAnsi(render("| not | a table |\nplain", 80)), "  | not | a table |\n  plain");
+});
+
+test("usage label: grouped tokens, cost with enough decimals to mean something", () => {
+  assert.equal(usageLabel({ tokens: 1960, cost: 0.0002968 }), "1,960 tok  $0.0003");
+  assert.equal(usageLabel({ tokens: 48210, cost: 0.0131 }), "48,210 tok  $0.013");
+  assert.equal(usageLabel({ tokens: 2000000, cost: 1.5 }), "2,000,000 tok  $1.50");
+  assert.equal(usageLabel({ tokens: 12, cost: 0.000002 }), "12 tok  <$0.0001");
+  assert.equal(usageLabel({ tokens: 500, cost: 0 }), "500 tok");
+  assert.equal(usageLabel({ tokens: 0, cost: 0 }), "");
 });

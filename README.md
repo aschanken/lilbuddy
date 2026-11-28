@@ -135,6 +135,10 @@ While the scratchpad is open:
 | Ctrl+E | put the command on your prompt to edit (zsh, fish; edited in place in bash 4+) |
 | any other char | start a follow-up question in the same conversation |
 
+The key legend also shows what the conversation has used so far — total
+tokens and cost, follow-ups included (for example `3,920 tok  $0.0006`). The
+figures are the ones pi reports per model call, priced from `pi/models.json`.
+
 Follow-up answers can hand over a new scratchpad command; the old box is
 stamped `SHELVED` so it is always clear which command is live.
 
