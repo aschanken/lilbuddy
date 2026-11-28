@@ -32,7 +32,7 @@ const assistantText = (messages) =>
 // Stage machine: start → thinking → tool:<name> → writing → done.
 // Feed it raw pi events; it calls `emit` with normalised ones:
 //   stage · thinking · text · text_break · tool_start · tool_end · usage ·
-//   response · retry · failure
+//   response · retry · spend
 export class EventTranslator {
   constructor(emit) {
     this.emit = emit;
@@ -77,6 +77,14 @@ export class EventTranslator {
       case "message_end":
         if (ev.message?.role === "assistant" && ev.message.stopReason === "error") {
           this.failure = ev.message.errorMessage || "the model returned an error";
+        }
+        // Each finished model call reports what it really used and cost (pi
+        // prices it from pi/models.json). Every call resends the context, so
+        // the calls of one answer add up.
+        if (ev.message?.role === "assistant" && ev.message.usage) {
+          const u = ev.message.usage;
+          const tokens = u.totalTokens ?? (u.input || 0) + (u.output || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
+          if (tokens > 0) this.emit({ type: "spend", tokens, cost: Number(u.cost?.total) || 0 });
         }
         break;
       case "tool_execution_start":

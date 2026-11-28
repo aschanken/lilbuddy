@@ -103,6 +103,10 @@ test("runPi: spawns pi isolated, stdin closed, and streams the answer", async ()
   assert.ok(!res.timedOut && !res.aborted);
   assert.deepEqual(stages(events), ["start", "thinking", "tool:probe", "writing", "done"]);
   assert.equal(extractCmd(text(events)), "cd /tmp && LIL_MARK=vault111");
+  // Both model calls of the answer are counted: tokens and cost add up.
+  const spend = events.filter((e) => e.type === "spend");
+  assert.equal(spend.reduce((n, e) => n + e.tokens, 0), 1960);
+  assert.equal(spend.reduce((n, e) => n + e.cost, 0).toFixed(7), "0.0002968");
   const seen = JSON.parse(fs.readFileSync(argsOut, "utf8"));
   assert.equal(seen.PI_CODING_AGENT_DIR, path.join(repo, "pi"));
   assert.equal(seen.LIL_RUNTIME, runtime);        // the extension reads snapshots from here

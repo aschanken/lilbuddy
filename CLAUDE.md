@@ -86,6 +86,11 @@ Key design facts:
   explicit `y`. The engine sets `LIL_ASK_DIR` only when someone can answer
   (interactive tty, motion on); otherwise "ask" degrades to BLOCKED. Time
   spent waiting on the human is added back to the run's timeout.
+- **Usage meter**: the legend under the answer shows total tokens and cost
+  for the conversation. Both come from `message_end.usage` on each assistant
+  message (`spend` events), summed — never from the panel's live estimate.
+  Cost is pi's own figure from the `cost` table in `pi/models.json`; if
+  DeepSeek's prices change, that table is what to update.
 - **Sayings**: random lines from a rotating pool (`~/.cache/lil/sayings.txt`,
   seeded from the repo's `sayings.txt`) replace a stage message once it has
   locked and dwelt 2s; every 5th run a detached child refreshes the pool via

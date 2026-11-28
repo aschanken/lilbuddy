@@ -16,7 +16,7 @@ import { PAL, width, sliceCells, fit } from "./ui/ansi.mjs";
 import { Live, Keys, sleep } from "./ui/term.mjs";
 import { Panel, header, headerLive } from "./ui/panel.mjs";
 import { JUNK } from "./ui/decrypt.mjs";
-import { AnswerStream, render, scratchpadBox, hintRow, wrapHard } from "./render.mjs";
+import { AnswerStream, render, scratchpadBox, hintRow, wrapHard, usageLabel } from "./render.mjs";
 import { extractCmd, stripCmd, isRisky } from "./lilcmd.mjs";
 import { runPi, replay } from "./pi.mjs";
 import { SCENARIOS } from "./demo.mjs";
@@ -52,6 +52,7 @@ export class App {
     this.style = env.LIL_RAMP === "classic" ? "classic" : "phosphor";
     this.headerDone = false;
     this.history = [];
+    this.spend = { tokens: 0, cost: 0 };   // across this conversation, follow-ups included
     this.nerd = cachedNerd(runtime) ?? true;
     this.model = "";
     try {
@@ -208,6 +209,7 @@ export class App {
         case "usage": panel.setUsage(ev.output); break;
         case "response": panel.newResponse(); break;
         case "retry": panel.retry(ev.attempt, ev.max, t); break;
+        case "spend": this.spend.tokens += ev.tokens; this.spend.cost += ev.cost; break;
         default: break;
       }
     };
@@ -362,7 +364,14 @@ export class App {
   async scratchpad(cmd) {
     const risky = cmd ? isRisky(cmd) : false;
     const idle = risky ? { stamp: "⚠ THIS ONE BITES", tone: "red" } : { stamp: "AWAITING ORDERS", tone: "amber" };
-    const hints = hintRow({ hasCmd: Boolean(cmd), mac: this.mac, edit: this.canEdit });
+    // The key legend, with what the conversation has used so far: on the same
+    // row when there is room, otherwise on a row of its own.
+    const legend = hintRow({ hasCmd: Boolean(cmd), mac: this.mac, edit: this.canEdit });
+    const used = usageLabel(this.spend);
+    const meter = used ? `${PAL.GRAY}${used}${PAL.RESET}` : "";
+    const hints = !meter ? [legend]
+      : width(legend) + 3 + width(used) <= this.cols ? [`${legend}   ${meter}`]
+      : [legend, `    ${meter}`];
     const box = (o) => (cmd ? scratchpadBox(cmd, this.cols, o) : []);
     const settle = (o) => { this.live.draw(box(o)); this.live.freeze(); };
 
@@ -374,7 +383,7 @@ export class App {
     let armed = 0;
     for (;;) {
       const state = armed ? { stamp: "PRESS RUN AGAIN TO CONFIRM", tone: "red" } : idle;
-      this.live.draw([...box(state), hints]);
+      this.live.draw([...box(state), ...hints]);
       // An armed RUN stands down by itself after four seconds.
       let disarm = null;
       let key = await Promise.race([
